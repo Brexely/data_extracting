@@ -1,0 +1,40 @@
+import os
+import csv
+
+def extract_data(file_path):
+    data = []
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+        for line in lines:
+            if line.startswith('Time'):
+                # Skip header
+                continue
+            elif line.strip():  # Check if line is not empty
+                parts = line.split('\t')
+                if len(parts) >= 4:  # Ensure line has enough columns
+                    time = parts[0].strip()
+                    temperature = parts[1].strip()
+                    weight = parts[3].strip()
+                    data.append([time, temperature, weight])
+    return data
+
+def main():
+    folder_path = r'C:\Users\Brechtl\OneDrive\Desktop\TRI DATA NITROGEN'  # Update with your folder path
+
+    for filename in os.listdir(folder_path):
+        if filename.endswith('.txt'):
+            file_path = os.path.join(folder_path, filename)
+            output_file = os.path.splitext(file_path)[0] + '.csv'
+
+            with open(output_file, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['Time', 'Temperature (C)', 'Weight (%)'])  # Updated header
+
+                file_data = extract_data(file_path)
+                for entry in file_data:
+                    writer.writerow(entry)
+
+            print(f'Data from {filename} has been extracted and saved to {output_file}.')
+
+if __name__ == "__main__":
+    main()
