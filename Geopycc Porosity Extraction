@@ -1,0 +1,42 @@
+import os
+import re
+import csv
+
+def extract_porosity(file_path):
+    porosities = []
+    with open(file_path, 'r') as file:
+        content = file.read()
+        # Using regular expression to find all percent porosity occurrences
+        matches = re.findall(r'Percent Porosity:\s+(-?\d+\.\d+)\s%', content)
+        if matches:
+            porosities.extend([float(match) for match in matches])
+    return porosities if porosities else None
+
+def extract_porosity_from_folder(folder_path):
+    porosity_values = {}
+    for file_name in os.listdir(folder_path):
+        if file_name.endswith('.txt'):
+            file_path = os.path.join(folder_path, file_name)
+            porosities = extract_porosity(file_path)
+            if porosities is not None:
+                # Remove the .txt extension
+                file_name_without_ext = os.path.splitext(file_name)[0]
+                if file_name_without_ext not in porosity_values:
+                    porosity_values[file_name_without_ext] = []
+                porosity_values[file_name_without_ext].extend(porosities)
+    return porosity_values
+
+folder_path = r"C:\Users\Brechtl\OneDrive\Desktop\HANDE Geopycc Lignin Base"
+output_csv_path = "porosity_data.csv"
+
+porosity_values = extract_porosity_from_folder(folder_path)
+
+# Export data to CSV
+with open(output_csv_path, 'w', newline='') as csvfile:
+    csv_writer = csv.writer(csvfile)
+    csv_writer.writerow(['File', 'Percent Porosity'])
+    for file_name, porosities in porosity_values.items():
+        for porosity in porosities:
+            csv_writer.writerow([file_name, porosity])
+
+print("CSV file exported successfully!")
