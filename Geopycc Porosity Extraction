@@ -26,7 +26,7 @@ def extract_porosity_from_folder(folder_path):
                 porosity_values[file_name_without_ext].extend(porosities)
     return porosity_values
 
-folder_path = r"C:\Users\Brechtl\OneDrive\Desktop\HANDE Geopycc Lignin Base"
+folder_path = r"C:\path\to\folder"
 output_csv_path = "porosity_data.csv"
 
 porosity_values = extract_porosity_from_folder(folder_path)
