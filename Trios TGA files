@@ -19,7 +19,7 @@ def extract_data(file_path):
     return data
 
 def main():
-    folder_path = r'C:\Users\Brechtl\OneDrive\Desktop\TRI DATA NITROGEN'  # Update with your folder path
+    folder_path = r'C:\path\to\folder'  # Update with your folder path
 
     for filename in os.listdir(folder_path):
         if filename.endswith('.txt'):
