@@ -1,0 +1,55 @@
+import csv
+import statistics
+import re
+import matplotlib.pyplot as plt
+from tabulate import tabulate
+
+# Load data from CSV file
+data = []
+with open('porosity_data.csv', 'r') as f: # Replace with your csv from Geopycc Data extraction
+    reader = csv.reader(f)
+    header = next(reader)  # Skip the header row
+    for row in reader:
+        data.append(row)
+
+# Convert strings to floats and exclude negative values
+data = [row for row in data if float(row[1]) >= 0]
+data = [[row[0], float(row[1])] for row in data]
+
+# Sort data by the first part of the name
+sorted_data = sorted(data, key=lambda x: float(re.search(r'\d+', x[0]).group(0)))
+
+# Group data by name
+grouped_data = {}
+for row in sorted_data:
+    name, value = row
+    if name not in grouped_data:
+        grouped_data[name] = []
+    grouped_data[name].append(value)
+
+# Calculate mean and standard deviation for each group
+means = {}
+stds = {}
+for name, values in grouped_data.items():
+    means[name] = statistics.mean(values)
+    stds[name] = statistics.stdev(values)
+
+# Plot means and standard deviations as a bar graph with error bars
+fig, ax = plt.subplots()
+ax.bar(range(len(means)), means.values(), align='center', alpha=0.5)
+ax.errorbar(range(len(means)), means.values(), yerr=list(stds.values()), fmt='none', ecolor='black', capsize=5)
+ax.set_xlabel('Composition')
+ax.set_ylabel('Percent Porosity [%]')
+ax.set_title('Means and Standard Deviations')
+ax.set_xticks(range(len(means)))
+ax.set_xticklabels([k for k in means.keys()], rotation=45, ha='right')
+
+# Print the table
+table = [["Group", "Mean", "Standard Deviation"]]
+for name in means.keys():
+    table.append([name, means[name], stds[name]])
+
+print(tabulate(table, headers="firstrow", tablefmt="grid"))
+
+plt.subplots_adjust(bottom=0.2)  # Adjust the bottom margin for the table
+plt.show()
