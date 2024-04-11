@@ -1,0 +1,47 @@
+import os
+import csv
+
+def extract_density(file_path):
+    with open(file_path, 'r') as file:
+        content = file.read()
+
+    density_line = None
+    for line in content.split('\n'):
+        if "Density:" in line:
+            density_line = line
+            break
+
+    if density_line:
+        try:
+            density_value = density_line.split(':')[1].strip().split()[0]
+            return density_value
+        except IndexError:
+            print(f"Error extracting density from {file_path}: Index out of range")
+            return None
+    else:
+        print(f"Error extracting density from {file_path}: 'Density:' not found")
+        return None
+
+def write_to_csv(output_file, data):
+    with open(output_file, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['File Name', 'Density (g/cm³)'])
+        for file_name, density in data.items():
+            writer.writerow([os.path.splitext(file_name)[0], density])
+
+def main(folder_path, output_file):
+    data = {}
+    for file_name in os.listdir(folder_path):
+        if file_name.lower().endswith('.txt'):
+            file_path = os.path.join(folder_path, file_name)
+            density = extract_density(file_path)
+            if density is not None:
+                data[file_name] = density
+    
+    write_to_csv(output_file, data)
+    print(f"Data has been written to {output_file}")
+
+if __name__ == "__main__":
+    folder_path = r'\path\to\data\'  # Change this to your folder path
+    output_file = 'density_data.csv'
+    main(folder_path, output_file)
