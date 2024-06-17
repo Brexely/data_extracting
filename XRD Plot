@@ -1,0 +1,112 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+from pybaselines import Baseline
+
+class XRDPlotter:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("XRD Data Plotter")
+        self.file_list = []
+
+        # Create GUI elements
+        self.create_widgets()
+
+    def create_widgets(self):
+        self.frame = tk.Frame(self.root)
+        self.frame.pack(padx=10, pady=10)
+
+        self.add_button = tk.Button(self.frame, text="Add XRD Data Files", command=self.add_files)
+        self.add_button.grid(row=0, column=0, padx=5, pady=5)
+
+        self.plot_button = tk.Button(self.frame, text="Plot Overlapped Spectra", command=self.plot_overlapped_data)
+        self.plot_button.grid(row=0, column=1, padx=5, pady=5)
+
+        self.offset_button = tk.Button(self.frame, text="Plot Separate Spectra", command=self.plot_separate_data)
+        self.offset_button.grid(row=0, column=2, padx=5, pady=5)
+
+        self.listbox = tk.Listbox(self.frame, selectmode=tk.MULTIPLE, width=50, height=15)
+        self.listbox.grid(row=1, column=0, columnspan=3, padx=5, pady=5)
+
+    def add_files(self):
+        filenames = filedialog.askopenfilenames(title="Select XRD Data Files",
+                                                filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
+        if filenames:
+            for filename in filenames:
+                self.file_list.append(filename)
+                self.listbox.insert(tk.END, filename)
+    
+    def plot_overlapped_data(self):
+        self.plot_data(offset=False, separate=False)
+
+    def plot_separate_data(self):
+        self.plot_data(offset=False, separate=True)
+
+    def plot_data(self, offset, separate):
+        if not self.file_list:
+            messagebox.showwarning("No Files Selected", "Please add at least one XRD data file.")
+            return
+
+        if separate:
+            fig, axes = plt.subplots(len(self.file_list), 1, figsize=(10, 6 * len(self.file_list)), sharex=True)
+            if len(self.file_list) == 1:
+                axes = [axes]  # Ensure axes is iterable even for a single subplot
+        else:
+            plt.figure(figsize=(10, 6))
+
+        min_intensity = float('inf')
+        max_intensity = float('-inf')
+        offset_value = 0
+
+        for idx, file in enumerate(self.file_list):
+            try:
+                data = pd.read_csv(file, delim_whitespace=True, header=None)
+                data = data[data.iloc[:, 0] >= 5]  # Filter out data below 5 degrees
+                angle = data.iloc[:, 0]
+                intensity = data.iloc[:, 1]
+
+                # Apply baseline correction using pybaselines
+                baseline_corrector = Baseline()
+                baseline = baseline_corrector.modpoly(intensity)[0]
+                corrected_intensity = intensity - baseline
+
+                if offset:
+                    corrected_intensity += offset_value
+                    offset_value += corrected_intensity.max() * 0.1  # Offset the next spectrum by 10% of the max intensity
+
+                # Update min and max intensity
+                min_intensity = min(min_intensity, corrected_intensity.min())
+                max_intensity = max(max_intensity, corrected_intensity.max())
+
+                if separate:
+                    axes[idx].plot(angle, corrected_intensity, label=file.split('/')[-1])
+                    axes[idx].set_ylim(min_intensity * 0.95, max_intensity * 1.05)
+                    axes[idx].set_ylabel("Intensity")
+                    axes[idx].legend()
+                    axes[idx].grid(True)
+                else:
+                    plt.plot(angle, corrected_intensity, label=file.split('/')[-1])
+            except Exception as e:
+                messagebox.showerror("Error Reading File", f"An error occurred while reading {file}:\n{e}")
+                return
+
+        if separate:
+            axes[-1].set_xlabel("2θ (Degrees)")
+            fig.suptitle("XRD Data", fontsize=16)
+        else:
+            plt.xlim(5, None)  # Start the plot from 5 degrees
+            plt.ylim(min_intensity * 0.95, max_intensity * 1.05)  # Adjust y-axis limits to give nice peaks
+            plt.xlabel("2θ (Degrees)")
+            plt.ylabel("Intensity")
+            plt.title("XRD Data")
+            plt.legend()
+            plt.grid(True)
+
+        plt.show()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = XRDPlotter(root)
+    root.mainloop()
