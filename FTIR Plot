@@ -1,0 +1,63 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import matplotlib.pyplot as plt
+import pandas as pd
+
+class FTIRPlotter:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("FTIR Data Plotter")
+        self.file_list = []
+
+        # Create GUI elements
+        self.create_widgets()
+
+    def create_widgets(self):
+        self.frame = tk.Frame(self.root)
+        self.frame.pack(padx=10, pady=10)
+
+        self.add_button = tk.Button(self.frame, text="Add FTIR Data Files", command=self.add_files)
+        self.add_button.grid(row=0, column=0, padx=5, pady=5)
+
+        self.plot_button = tk.Button(self.frame, text="Plot Data", command=self.plot_data)
+        self.plot_button.grid(row=0, column=1, padx=5, pady=5)
+
+        self.listbox = tk.Listbox(self.frame, selectmode=tk.MULTIPLE, width=50, height=15)
+        self.listbox.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
+
+    def add_files(self):
+        filenames = filedialog.askopenfilenames(title="Select FTIR Data Files",
+                                                filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
+        if filenames:
+            for filename in filenames:
+                self.file_list.append(filename)
+                self.listbox.insert(tk.END, filename)
+    
+    def plot_data(self):
+        if not self.file_list:
+            messagebox.showwarning("No Files Selected", "Please add at least one FTIR data file.")
+            return
+
+        plt.figure(figsize=(10, 6))
+        for file in self.file_list:
+            try:
+                data = pd.read_csv(file, delim_whitespace=True, header=None)
+                wavenumber = data.iloc[:, 0]
+                intensity = data.iloc[:, 1]
+                plt.plot(wavenumber, intensity, label=file.split('/')[-1])
+            except Exception as e:
+                messagebox.showerror("Error Reading File", f"An error occurred while reading {file}:\n{e}")
+                return
+
+        plt.xlim(4000, 400)
+        plt.xlabel("Wavenumber (cm^-1)")
+        plt.ylabel("Intensity")
+        plt.title("FTIR Data")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = FTIRPlotter(root)
+    root.mainloop()
