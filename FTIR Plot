@@ -29,7 +29,7 @@ class FTIRPlotter:
 
     def add_files(self):
         filenames = filedialog.askopenfilenames(title="Select FTIR Data Files",
-                                                filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
+                                                filetypes=[("All Files", "*.*")])
         if filenames:
             for filename in filenames:
                 self.file_list.append(filename)
