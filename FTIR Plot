@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, colorchooser
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -24,36 +24,90 @@ class FTIRPlotter:
         self.plot_button = tk.Button(self.frame, text="Plot Data", command=self.plot_data)
         self.plot_button.grid(row=0, column=1, padx=5, pady=5)
 
-        self.listbox = tk.Listbox(self.frame, selectmode=tk.MULTIPLE, width=50, height=15)
-        self.listbox.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
+        self.listbox_frame = tk.Frame(self.frame)
+        self.listbox_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
+
+        self.listbox = tk.Listbox(self.listbox_frame, selectmode=tk.MULTIPLE, width=50, height=15)
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH)
+
+        self.color_buttons_frame = tk.Frame(self.listbox_frame)
+        self.color_buttons_frame.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.color_buttons = []
+
+        self.plot_option = tk.StringVar(value="Interactive")
+        self.radio_interactive = tk.Radiobutton(self.frame, text="Interactive Window", variable=self.plot_option, value="Interactive")
+        self.radio_interactive.grid(row=2, column=0, padx=5, pady=5, sticky='w')
+
+        self.radio_separate = tk.Radiobutton(self.frame, text="Separate Window", variable=self.plot_option, value="Separate")
+        self.radio_separate.grid(row=2, column=1, padx=5, pady=5, sticky='w')
 
     def add_files(self):
         filenames = filedialog.askopenfilenames(title="Select FTIR Data Files",
                                                 filetypes=[("All Files", "*.*")])
         if filenames:
             for filename in filenames:
-                self.file_list.append(filename)
+                self.file_list.append({"filename": filename, "color": "#000000"})
                 self.listbox.insert(tk.END, filename)
-    
+                self.add_color_button()
+
+    def add_color_button(self):
+        index = len(self.color_buttons)
+        color_button = tk.Button(self.color_buttons_frame, text="Choose Color", command=lambda idx=index: self.choose_color(idx))
+        color_button.pack(pady=5)
+        self.color_buttons.append(color_button)
+
+    def choose_color(self, index):
+        color_code = colorchooser.askcolor(title="Choose color")[1]
+        if color_code:
+            self.file_list[index]["color"] = color_code
+            self.color_buttons[index].configure(bg=color_code)
+
     def plot_data(self):
         if not self.file_list:
             messagebox.showwarning("No Files Selected", "Please add at least one FTIR data file.")
             return
 
-        # Create a new Tkinter window for the plot
+        plot_option = self.plot_option.get()
+
+        if plot_option == "Interactive":
+            self.plot_in_interactive_window()
+        else:
+            self.plot_in_separate_window()
+
+    def plot_in_interactive_window(self):
+        plt.figure(figsize=(10, 6))
+        for file_info in self.file_list:
+            try:
+                data = pd.read_csv(file_info["filename"], delim_whitespace=True, header=None)
+                wavenumber = data.iloc[:, 0]
+                intensity = data.iloc[:, 1]
+                plt.plot(wavenumber, intensity, label=file_info["filename"].split('/')[-1], color=file_info["color"])
+            except Exception as e:
+                messagebox.showerror("Error Reading File", f"An error occurred while reading {file_info['filename']}:\n{e}")
+                return
+
+        plt.xlim(4000, 400)
+        plt.xlabel("Wavenumber (cm^-1)")
+        plt.ylabel("Intensity")
+        plt.title("FTIR Data")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+    def plot_in_separate_window(self):
         plot_window = tk.Toplevel(self.root)
         plot_window.title("FTIR Data Plot")
 
-        # Create a figure and plot the data
         fig, ax = plt.subplots(figsize=(10, 6))
-        for file in self.file_list:
+        for file_info in self.file_list:
             try:
-                data = pd.read_csv(file, delim_whitespace=True, header=None)
+                data = pd.read_csv(file_info["filename"], delim_whitespace=True, header=None)
                 wavenumber = data.iloc[:, 0]
                 intensity = data.iloc[:, 1]
-                ax.plot(wavenumber, intensity, label=file.split('/')[-1])
+                ax.plot(wavenumber, intensity, label=file_info["filename"].split('/')[-1], color=file_info["color"])
             except Exception as e:
-                messagebox.showerror("Error Reading File", f"An error occurred while reading {file}:\n{e}")
+                messagebox.showerror("Error Reading File", f"An error occurred while reading {file_info['filename']}:\n{e}")
                 return
 
         ax.set_xlim(4000, 400)
@@ -63,17 +117,14 @@ class FTIRPlotter:
         ax.legend()
         ax.grid(True)
 
-        # Embed the plot into a tkinter canvas
         canvas = FigureCanvasTkAgg(fig, master=plot_window)
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        # Add matplotlib navigation toolbar
         toolbar = matplotlib.backends.backend_tkagg.NavigationToolbar2Tk(canvas, plot_window)
         toolbar.update()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        # Function to destroy plot window when closed
         def on_close():
             plot_window.destroy()
 
