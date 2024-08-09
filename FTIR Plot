@@ -1,136 +1,150 @@
-import tkinter as tk
-from tkinter import filedialog, messagebox, colorchooser
-import matplotlib
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import sys
 import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QFileDialog, QListWidget, 
+    QVBoxLayout, QPushButton, QWidget, QRadioButton, 
+    QHBoxLayout, QCheckBox
+)
 
-class FTIRPlotter:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("FTIR Data Plotter")
+# Define Uni Wien color palette
+UNIWEN_COLORS = ["#002147", "#d71920", "#ffcc00", "#4e7ab1", "#8fb339", "#6d6e70", "#005f83", "#ff9d00"]
+
+class FTIRPlotter(QMainWindow):
+    def __init__(self):
+        super().__init__()
+
+        self.setWindowTitle("FTIR Data Plotter")
         self.file_list = []
 
-        # Create GUI elements
-        self.create_widgets()
+        # Central widget and layout
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
 
-    def create_widgets(self):
-        self.frame = tk.Frame(self.root)
-        self.frame.pack(padx=10, pady=10)
+        # File list widget
+        self.list_widget = QListWidget()
+        layout.addWidget(self.list_widget)
 
-        self.add_button = tk.Button(self.frame, text="Add FTIR Data Files", command=self.add_files)
-        self.add_button.grid(row=0, column=0, padx=5, pady=5)
+        # Add and Remove buttons
+        button_layout = QHBoxLayout()
+        layout.addLayout(button_layout)
 
-        self.plot_button = tk.Button(self.frame, text="Plot Data", command=self.plot_data)
-        self.plot_button.grid(row=0, column=1, padx=5, pady=5)
+        self.add_button = QPushButton("Add FTIR Data Files")
+        self.add_button.clicked.connect(self.add_files)
+        button_layout.addWidget(self.add_button)
 
-        self.listbox_frame = tk.Frame(self.frame)
-        self.listbox_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
+        self.remove_button = QPushButton("Remove Selected Files")
+        self.remove_button.clicked.connect(self.remove_files)
+        button_layout.addWidget(self.remove_button)
 
-        self.listbox = tk.Listbox(self.listbox_frame, selectmode=tk.MULTIPLE, width=50, height=15)
-        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH)
+        # Plot options
+        self.radio_staggered = QRadioButton("Staggered")
+        self.radio_staggered.setChecked(True)
+        self.radio_overlap = QRadioButton("Overlap")
+        plot_option_layout = QHBoxLayout()
+        plot_option_layout.addWidget(self.radio_staggered)
+        plot_option_layout.addWidget(self.radio_overlap)
+        layout.addLayout(plot_option_layout)
 
-        self.color_buttons_frame = tk.Frame(self.listbox_frame)
-        self.color_buttons_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        # Plot button
+        self.plot_button = QPushButton("Plot Data")
+        self.plot_button.clicked.connect(self.plot_data)
+        layout.addWidget(self.plot_button)
 
-        self.color_buttons = []
-
-        self.plot_option = tk.StringVar(value="Interactive")
-        self.radio_interactive = tk.Radiobutton(self.frame, text="Interactive Window", variable=self.plot_option, value="Interactive")
-        self.radio_interactive.grid(row=2, column=0, padx=5, pady=5, sticky='w')
-
-        self.radio_separate = tk.Radiobutton(self.frame, text="Separate Window", variable=self.plot_option, value="Separate")
-        self.radio_separate.grid(row=2, column=1, padx=5, pady=5, sticky='w')
+        # Remove Y-Axis Labels option
+        self.remove_y_axis_labels_checkbox = QCheckBox("Remove Y-Axis Labels")
+        layout.addWidget(self.remove_y_axis_labels_checkbox)
 
     def add_files(self):
-        filenames = filedialog.askopenfilenames(title="Select FTIR Data Files",
-                                                filetypes=[("All Files", "*.*")])
-        if filenames:
-            for filename in filenames:
-                self.file_list.append({"filename": filename, "color": "#000000"})
-                self.listbox.insert(tk.END, filename)
-                self.add_color_button()
+        filenames, _ = QFileDialog.getOpenFileNames(self, "Select FTIR Data Files", "", "All Files (*);;TXT Files (*.txt);;CSV Files (*.csv)")
+        for filename in filenames:
+            color = self.get_default_color()
+            self.file_list.append({"filename": filename, "color": color})
+            self.list_widget.addItem(f"{filename} (Color: {color})")
 
-    def add_color_button(self):
-        index = len(self.color_buttons)
-        color_button = tk.Button(self.color_buttons_frame, text="Choose Color", command=lambda idx=index: self.choose_color(idx))
-        color_button.pack(pady=5)
-        self.color_buttons.append(color_button)
+    def remove_files(self):
+        for item in self.list_widget.selectedItems():
+            index = self.list_widget.row(item)
+            self.list_widget.takeItem(index)
+            self.file_list.pop(index)
 
-    def choose_color(self, index):
-        color_code = colorchooser.askcolor(title="Choose color")[1]
-        if color_code:
-            self.file_list[index]["color"] = color_code
-            self.color_buttons[index].configure(bg=color_code)
+    def get_default_color(self):
+        color_index = len(self.file_list) % len(UNIWEN_COLORS)
+        return UNIWEN_COLORS[color_index]
+
+    def parse_ftir_file(self, filename):
+        try:
+            data = pd.read_csv(filename, delim_whitespace=True, header=None)
+            wavenumber = data.iloc[:, 0]
+            transmittance = data.iloc[:, 1]
+            return pd.DataFrame({'Wavenumber': wavenumber, 'Transmittance': transmittance})
+        except Exception as e:
+            print(f"Error reading file {filename}: {e}")
+            return pd.DataFrame()
 
     def plot_data(self):
         if not self.file_list:
-            messagebox.showwarning("No Files Selected", "Please add at least one FTIR data file.")
             return
 
-        plot_option = self.plot_option.get()
+        plot_option = "Staggered" if self.radio_staggered.isChecked() else "Overlap"
+        remove_y_axis_labels = self.remove_y_axis_labels_checkbox.isChecked()
 
-        if plot_option == "Interactive":
-            self.plot_in_interactive_window()
+        if plot_option == "Staggered":
+            self.plot_in_staggered_window(remove_y_axis_labels)
         else:
-            self.plot_in_separate_window()
+            self.plot_in_overlap_window(remove_y_axis_labels)
 
-    def plot_in_interactive_window(self):
+    def plot_in_staggered_window(self, remove_y_axis_labels):
         plt.figure(figsize=(10, 6))
+        offset = 0
+        offset_factor = 0.3  # Control spacing between plots
         for file_info in self.file_list:
             try:
-                data = pd.read_csv(file_info["filename"], delim_whitespace=True, header=None)
-                wavenumber = data.iloc[:, 0]
-                intensity = data.iloc[:, 1]
-                plt.plot(wavenumber, intensity, label=file_info["filename"].split('/')[-1], color=file_info["color"])
+                data = self.parse_ftir_file(file_info["filename"])
+                if not data.empty:
+                    wavenumber = data["Wavenumber"]
+                    transmittance = data["Transmittance"] + offset
+                    sns.lineplot(x=wavenumber, y=transmittance, label=file_info["filename"].split('/')[-1], color=file_info["color"])
+                    offset += transmittance.max() * offset_factor
             except Exception as e:
-                messagebox.showerror("Error Reading File", f"An error occurred while reading {file_info['filename']}:\n{e}")
-                return
+                print(f"Error plotting data for file {file_info['filename']}: {e}")
 
-        plt.xlim(4000, 400)
+        plt.xlim(4000, 400)  # Set x-axis limits from 4000 to 400 cm^-1
         plt.xlabel("Wavenumber (cm^-1)")
-        plt.ylabel("Intensity")
+        plt.ylabel("Transmittance")
         plt.title("FTIR Data")
         plt.legend()
         plt.grid(True)
+        if remove_y_axis_labels:
+            plt.yticks([])  # Remove y-axis ticks
         plt.show()
 
-    def plot_in_separate_window(self):
-        plot_window = tk.Toplevel(self.root)
-        plot_window.title("FTIR Data Plot")
-
-        fig, ax = plt.subplots(figsize=(10, 6))
+    def plot_in_overlap_window(self, remove_y_axis_labels):
+        plt.figure(figsize=(10, 6))
         for file_info in self.file_list:
             try:
-                data = pd.read_csv(file_info["filename"], delim_whitespace=True, header=None)
-                wavenumber = data.iloc[:, 0]
-                intensity = data.iloc[:, 1]
-                ax.plot(wavenumber, intensity, label=file_info["filename"].split('/')[-1], color=file_info["color"])
+                data = self.parse_ftir_file(file_info["filename"])
+                if not data.empty:
+                    wavenumber = data["Wavenumber"]
+                    transmittance = data["Transmittance"]
+                    sns.lineplot(x=wavenumber, y=transmittance, label=file_info["filename"].split('/')[-1], color=file_info["color"])
             except Exception as e:
-                messagebox.showerror("Error Reading File", f"An error occurred while reading {file_info['filename']}:\n{e}")
-                return
+                print(f"Error plotting data for file {file_info['filename']}: {e}")
 
-        ax.set_xlim(4000, 400)
-        ax.set_xlabel("Wavenumber (cm^-1)")
-        ax.set_ylabel("Intensity")
-        ax.set_title("FTIR Data")
-        ax.legend()
-        ax.grid(True)
-
-        canvas = FigureCanvasTkAgg(fig, master=plot_window)
-        canvas.draw()
-        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
-        toolbar = matplotlib.backends.backend_tkagg.NavigationToolbar2Tk(canvas, plot_window)
-        toolbar.update()
-        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
-        def on_close():
-            plot_window.destroy()
-
-        plot_window.protocol("WM_DELETE_WINDOW", on_close)
+        plt.xlim(4000, 400)  # Set x-axis limits from 4000 to 400 cm^-1
+        plt.xlabel("Wavenumber (cm^-1)")
+        plt.ylabel("Transmittance")
+        plt.title("FTIR Data")
+        plt.legend()
+        plt.grid(True)
+        if remove_y_axis_labels:
+            plt.yticks([])  # Remove y-axis ticks
+        plt.show()
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = FTIRPlotter(root)
-    root.mainloop()
+    app = QApplication(sys.argv)
+    window = FTIRPlotter()
+    window.show()
+    sys.exit(app.exec_())

@@ -1,133 +1,173 @@
-import tkinter as tk
-from tkinter import filedialog, messagebox, colorchooser
-import matplotlib.pyplot as plt
+import sys
+import re
 import pandas as pd
-import numpy as np
-from pybaselines import Baseline
+import matplotlib.pyplot as plt
+import seaborn as sns
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QFileDialog, QListWidget, 
+    QVBoxLayout, QPushButton, QWidget, QRadioButton, 
+    QHBoxLayout, QColorDialog, QLabel, QCheckBox
+)
+from PyQt5.QtGui import QColor
 
-class XRDPlotter:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("XRD Data Plotter")
+# Define a UniWien color palette
+UNIWEN_COLORS = ["#002147", "#d71920", "#ffcc00", "#4e7ab1", "#8fb339", "#6d6e70", "#005f83", "#ff9d00"]
+
+class XRDPlotter(QMainWindow):
+    def __init__(self):
+        super().__init__()
+
+        self.setWindowTitle("XRD Data Plotter")
         self.file_list = []
 
-        # Create GUI elements
-        self.create_widgets()
+        # Central widget and layout
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
 
-    def create_widgets(self):
-        self.frame = tk.Frame(self.root)
-        self.frame.pack(padx=10, pady=10)
+        # File list widget
+        self.list_widget = QListWidget()
+        layout.addWidget(self.list_widget)
 
-        self.add_button = tk.Button(self.frame, text="Add XRD Data Files", command=self.add_files)
-        self.add_button.grid(row=0, column=0, padx=5, pady=5)
+        # Add and Remove buttons
+        button_layout = QHBoxLayout()
+        layout.addLayout(button_layout)
 
-        self.plot_button = tk.Button(self.frame, text="Plot Overlapped Spectra", command=self.plot_overlapped_data)
-        self.plot_button.grid(row=0, column=1, padx=5, pady=5)
+        self.add_button = QPushButton("Add XRD Data Files")
+        self.add_button.clicked.connect(self.add_files)
+        button_layout.addWidget(self.add_button)
 
-        self.offset_button = tk.Button(self.frame, text="Plot Separate Spectra", command=self.plot_separate_data)
-        self.offset_button.grid(row=0, column=2, padx=5, pady=5)
+        self.remove_button = QPushButton("Remove Selected Files")
+        self.remove_button.clicked.connect(self.remove_files)
+        button_layout.addWidget(self.remove_button)
 
-        self.listbox_frame = tk.Frame(self.frame)
-        self.listbox_frame.grid(row=1, column=0, columnspan=3, padx=5, pady=5)
+        # Plot options
+        self.radio_separate = QRadioButton("Separate")
+        self.radio_separate.setChecked(True)
+        self.radio_overlap = QRadioButton("Overlap")
+        plot_option_layout = QHBoxLayout()
+        plot_option_layout.addWidget(self.radio_separate)
+        plot_option_layout.addWidget(self.radio_overlap)
+        layout.addLayout(plot_option_layout)
 
-        self.listbox = tk.Listbox(self.listbox_frame, selectmode=tk.MULTIPLE, width=50, height=15)
-        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH)
+        # Plot button
+        self.plot_button = QPushButton("Plot Data")
+        self.plot_button.clicked.connect(self.plot_data)
+        layout.addWidget(self.plot_button)
 
-        self.color_buttons_frame = tk.Frame(self.listbox_frame)
-        self.color_buttons_frame.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.color_buttons = []
+        # Remove Y-Axis Labels option
+        self.remove_y_axis_labels_checkbox = QCheckBox("Remove Y-Axis Labels")
+        layout.addWidget(self.remove_y_axis_labels_checkbox)
 
     def add_files(self):
-        filenames = filedialog.askopenfilenames(title="Select XRD Data Files",
-                                                filetypes=[("All Files", "*.*")])
-        if filenames:
-            for filename in filenames:
-                self.file_list.append({"filename": filename, "color": "#000000"})
-                self.listbox.insert(tk.END, filename)
-                self.add_color_button()
+        filenames, _ = QFileDialog.getOpenFileNames(self, "Select XRD Data Files", "", "All Files (*);;TXT Files (*.txt);;CSV Files (*.csv)")
+        for filename in filenames:
+            color = self.get_default_color()
+            self.file_list.append({"filename": filename, "color": color})
+            self.list_widget.addItem(f"{filename} (Color: {color})")
 
-    def add_color_button(self):
-        index = len(self.color_buttons)
-        color_button = tk.Button(self.color_buttons_frame, text="Choose Color", command=lambda idx=index: self.choose_color(idx))
-        color_button.pack(pady=5)
-        self.color_buttons.append(color_button)
+    def remove_files(self):
+        for item in self.list_widget.selectedItems():
+            index = self.list_widget.row(item)
+            self.list_widget.takeItem(index)
+            self.file_list.pop(index)
 
-    def choose_color(self, index):
-        color_code = colorchooser.askcolor(title="Choose color")[1]
-        if color_code:
-            self.file_list[index]["color"] = color_code
-            self.color_buttons[index].configure(bg=color_code)
+    def get_default_color(self):
+        color_index = len(self.file_list) % len(UNIWEN_COLORS)
+        return UNIWEN_COLORS[color_index]
 
-    def plot_overlapped_data(self):
-        self.plot_data(offset=False, separate=False)
+    def parse_xrd_file(self, filename):
+        with open(filename, 'r') as file:
+            lines = file.readlines()
 
-    def plot_separate_data(self):
-        self.plot_data(offset=False, separate=True)
+        # Find the start of the scan points data
+        data_start = None
+        for i, line in enumerate(lines):
+            if "[Scan points]" in line:
+                data_start = i + 1
+                break
 
-    def plot_data(self, offset, separate):
+        if data_start is None:
+            raise ValueError("Scan points data not found in the file.")
+
+        # Extract the scan points data
+        data = []
+        for line in lines[data_start:]:
+            line = line.strip()
+            if re.match(r'^\s*$', line):  # Skip empty lines
+                continue
+            parts = line.split(',')
+            try:
+                angle = float(parts[0])
+                intensity = float(parts[2])
+                data.append((angle, intensity))
+            except ValueError:
+                continue
+
+        if not data:
+            raise ValueError("No valid scan points data found.")
+
+        return pd.DataFrame(data, columns=["Angle", "Intensity"])
+
+    def plot_data(self):
         if not self.file_list:
-            messagebox.showwarning("No Files Selected", "Please add at least one XRD data file.")
             return
 
-        if separate:
-            fig, axes = plt.subplots(len(self.file_list), 1, figsize=(10, 6 * len(self.file_list)), sharex=True)
-            if len(self.file_list) == 1:
-                axes = [axes]  # Ensure axes is iterable even for a single subplot
+        plot_option = "Separate" if self.radio_separate.isChecked() else "Overlap"
+        remove_y_axis_labels = self.remove_y_axis_labels_checkbox.isChecked()
+
+        if plot_option == "Separate":
+            self.plot_in_separate_window(remove_y_axis_labels)
         else:
-            plt.figure(figsize=(10, 6))
+            self.plot_in_overlap_window(remove_y_axis_labels)
 
-        min_intensity = float('inf')
-        max_intensity = float('-inf')
-        offset_value = 0
-
-        for idx, file_info in enumerate(self.file_list):
+    def plot_in_separate_window(self, remove_y_axis_labels):
+        plt.figure(figsize=(10, 6))
+        offset = 0
+        offset_factor = 0.3  # Control spacing between plots
+        for file_info in self.file_list:
             try:
-                data = pd.read_csv(file_info["filename"], delim_whitespace=True, header=None)
-                data = data[data.iloc[:, 0] >= 5]  # Filter out data below 5 degrees
-                angle = data.iloc[:, 0]
-                intensity = data.iloc[:, 1]
-
-                # Apply baseline correction using pybaselines
-                baseline_corrector = Baseline()
-                baseline = baseline_corrector.modpoly(intensity)[0]
-                corrected_intensity = intensity - baseline
-
-                if offset:
-                    corrected_intensity += offset_value
-                    offset_value += corrected_intensity.max() * 0.1  # Offset the next spectrum by 10% of the max intensity
-
-                # Update min and max intensity
-                min_intensity = min(min_intensity, corrected_intensity.min())
-                max_intensity = max(max_intensity, corrected_intensity.max())
-
-                if separate:
-                    axes[idx].plot(angle, corrected_intensity, label=file_info["filename"].split('/')[-1], color=file_info["color"])
-                    axes[idx].set_ylim(min_intensity * 0.95, max_intensity * 1.05)
-                    axes[idx].set_ylabel("Intensity")
-                    axes[idx].legend()
-                    axes[idx].grid(True)
-                else:
-                    plt.plot(angle, corrected_intensity, label=file_info["filename"].split('/')[-1], color=file_info["color"])
+                data = self.parse_xrd_file(file_info["filename"])
+                twotheta = data["Angle"]
+                intensity = data["Intensity"] + offset
+                sns.lineplot(x=twotheta, y=intensity, label=file_info["filename"].split('/')[-1], color=file_info["color"])
+                offset += intensity.max() * offset_factor
             except Exception as e:
-                messagebox.showerror("Error Reading File", f"An error occurred while reading {file_info['filename']}:\n{e}")
+                print(f"Error reading file {file_info['filename']}: {e}")
                 return
 
-        if separate:
-            axes[-1].set_xlabel("2θ (Degrees)")
-            fig.suptitle("XRD Data", fontsize=16)
-        else:
-            plt.xlim(5, None)  # Start the plot from 5 degrees
-            plt.ylim(min_intensity * 0.95, max_intensity * 1.05)  # Adjust y-axis limits to give nice peaks
-            plt.xlabel("2θ (Degrees)")
-            plt.ylabel("Intensity")
-            plt.title("XRD Data")
-            plt.legend()
-            plt.grid(True)
+        plt.xlabel("2θ (degrees)")
+        plt.ylabel("Intensity (a.u.)")
+        plt.title("XRD Data")
+        plt.legend()
+        plt.grid(True)
+        if remove_y_axis_labels:
+            plt.yticks([])  # Remove y-axis ticks
+        plt.show()
 
+    def plot_in_overlap_window(self, remove_y_axis_labels):
+        plt.figure(figsize=(10, 6))
+        for file_info in self.file_list:
+            try:
+                data = self.parse_xrd_file(file_info["filename"])
+                twotheta = data["Angle"]
+                intensity = data["Intensity"]
+                sns.lineplot(x=twotheta, y=intensity, label=file_info["filename"].split('/')[-1], color=file_info["color"])
+            except Exception as e:
+                print(f"Error reading file {file_info['filename']}: {e}")
+                return
+
+        plt.xlabel("2θ (degrees)")
+        plt.ylabel("Intensity (a.u.)")
+        plt.title("XRD Data")
+        plt.legend()
+        plt.grid(True)
+        if remove_y_axis_labels:
+            plt.yticks([])  # Remove y-axis ticks
         plt.show()
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = XRDPlotter(root)
-    root.mainloop()
+    app = QApplication(sys.argv)
+    window = XRDPlotter()
+    window.show()
+    sys.exit(app.exec_())
