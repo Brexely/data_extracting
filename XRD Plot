@@ -60,7 +60,7 @@ class XRDPlotter(QMainWindow):
         layout.addWidget(self.remove_y_axis_labels_checkbox)
 
     def add_files(self):
-        filenames, _ = QFileDialog.getOpenFileNames(self, "Select XRD Data Files", "", "All Files (*);;TXT Files (*.txt);;CSV Files (*.csv)")
+        filenames, _ = QFileDialog.getOpenFileNames(self, "Select XRD Data Files", "", "All Files (*);;TXT Files (*.txt);;CSV Files (*.csv);;TSV Files (*.tsv)")
         for filename in filenames:
             color = self.get_default_color()
             self.file_list.append({"filename": filename, "color": color})
@@ -77,37 +77,43 @@ class XRDPlotter(QMainWindow):
         return UNIWEN_COLORS[color_index]
 
     def parse_xrd_file(self, filename):
-        with open(filename, 'r') as file:
-            lines = file.readlines()
+        if filename.endswith(".tsv"):
+            # Read TSV file assuming columns are "Angle" and "Intensity"
+            data = pd.read_csv(filename, sep='\t', header=None, names=["Angle", "Intensity"])
+        else:
+            with open(filename, 'r') as file:
+                lines = file.readlines()
 
-        # Find the start of the scan points data
-        data_start = None
-        for i, line in enumerate(lines):
-            if "[Scan points]" in line:
-                data_start = i + 1
-                break
+            # Find the start of the scan points data
+            data_start = None
+            for i, line in enumerate(lines):
+                if "[Scan points]" in line:
+                    data_start = i + 1
+                    break
 
-        if data_start is None:
-            raise ValueError("Scan points data not found in the file.")
+            if data_start is None:
+                raise ValueError("Scan points data not found in the file.")
 
-        # Extract the scan points data
-        data = []
-        for line in lines[data_start:]:
-            line = line.strip()
-            if re.match(r'^\s*$', line):  # Skip empty lines
-                continue
-            parts = line.split(',')
-            try:
-                angle = float(parts[0])
-                intensity = float(parts[2])
-                data.append((angle, intensity))
-            except ValueError:
-                continue
+            # Extract the scan points data
+            data = []
+            for line in lines[data_start:]:
+                line = line.strip()
+                if re.match(r'^\s*$', line):  # Skip empty lines
+                    continue
+                parts = line.split(',')
+                try:
+                    angle = float(parts[0])
+                    intensity = float(parts[2])
+                    data.append((angle, intensity))
+                except ValueError:
+                    continue
 
-        if not data:
-            raise ValueError("No valid scan points data found.")
+            if not data:
+                raise ValueError("No valid scan points data found.")
 
-        return pd.DataFrame(data, columns=["Angle", "Intensity"])
+            data = pd.DataFrame(data, columns=["Angle", "Intensity"])
+
+        return data
 
     def plot_data(self):
         if not self.file_list:
