@@ -5,10 +5,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QListWidget, 
-    QVBoxLayout, QPushButton, QWidget, QRadioButton, 
-    QHBoxLayout, QColorDialog, QLabel, QCheckBox
+    QVBoxLayout, QPushButton, QRadioButton, 
+    QHBoxLayout, QInputDialog, QCheckBox, QWidget
 )
-from PyQt5.QtGui import QColor
+import os
 
 # Define a UniWien color palette
 UNIWEN_COLORS = ["#002147", "#d71920", "#ffcc00", "#4e7ab1", "#8fb339", "#6d6e70", "#005f83", "#ff9d00"]
@@ -63,7 +63,13 @@ class XRDPlotter(QMainWindow):
         filenames, _ = QFileDialog.getOpenFileNames(self, "Select XRD Data Files", "", "All Files (*);;TXT Files (*.txt);;CSV Files (*.csv);;TSV Files (*.tsv)")
         for filename in filenames:
             color = self.get_default_color()
-            self.file_list.append({"filename": filename, "color": color})
+            
+            # Prompt for a custom name
+            custom_name, ok = QInputDialog.getText(self, "Custom Name", f"Enter a custom name for {os.path.basename(filename)}:")
+            if not ok or not custom_name:  # If the user cancels or doesn't enter a name, use the base name
+                custom_name = os.path.splitext(os.path.basename(filename))[0]
+            
+            self.file_list.append({"filename": filename, "color": color, "custom_name": custom_name})
             self.list_widget.addItem(f"{filename} (Color: {color})")
 
     def remove_files(self):
@@ -130,13 +136,17 @@ class XRDPlotter(QMainWindow):
     def plot_in_separate_window(self, remove_y_axis_labels):
         plt.figure(figsize=(10, 6))
         offset = 0
-        offset_factor = 0.3  # Control spacing between plots
+        offset_factor = 1  # Control spacing between plots
         for file_info in self.file_list:
             try:
                 data = self.parse_xrd_file(file_info["filename"])
                 twotheta = data["Angle"]
                 intensity = data["Intensity"] + offset
-                sns.lineplot(x=twotheta, y=intensity, label=file_info["filename"].split('/')[-1], color=file_info["color"])
+                
+                # Use the custom name for the legend
+                label = file_info["custom_name"]
+                sns.lineplot(x=twotheta, y=intensity, label=label, color=file_info["color"])
+                
                 offset += intensity.max() * offset_factor
             except Exception as e:
                 print(f"Error reading file {file_info['filename']}: {e}")
@@ -158,7 +168,10 @@ class XRDPlotter(QMainWindow):
                 data = self.parse_xrd_file(file_info["filename"])
                 twotheta = data["Angle"]
                 intensity = data["Intensity"]
-                sns.lineplot(x=twotheta, y=intensity, label=file_info["filename"].split('/')[-1], color=file_info["color"])
+                
+                # Use the custom name for the legend
+                label = file_info["custom_name"]
+                sns.lineplot(x=twotheta, y=intensity, label=label, color=file_info["color"])
             except Exception as e:
                 print(f"Error reading file {file_info['filename']}: {e}")
                 return
