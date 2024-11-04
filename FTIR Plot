@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (
 
 # Define Uni Wien color palette
 UNIWEN_COLORS = ["#002147", "#d71920", "#ffcc00", "#4e7ab1", "#8fb339", "#6d6e70", "#005f83", "#ff9d00"]
-
+#test
 class FTIRPlotter(QMainWindow):
     def __init__(self):
         super().__init__()
