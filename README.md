@@ -25,7 +25,7 @@ Getting Started
 
     Clone the repository:
 
-git clone https://github.com/your-username/repo-name.git
+git clone https://github.com/Brexley/data_extracting.git
 
 Install required dependencies:
 
