@@ -12,8 +12,8 @@ How to Use
         Simply run the provided script to open the Tkinter interface.
         Upload your FTIR or XRD data files through the GUI and click the "Process" button.
 
-    Other Analyses:
-        For non-automated tools, manual adjustments to scripts may be needed. Refer to the comments in the relevant scripts for guidance.
+    Device Specific Scripts:
+        For non-automated tools, manual adjustments to scripts may be needed. Refer to the comments in the relevant scripts for guidance. (Most of them are for Bismarck Group Machines)
 
 Requirements
 
