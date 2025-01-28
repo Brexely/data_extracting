@@ -1,192 +1,26 @@
-import sys
-import re
-import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QFileDialog, QListWidget, 
-    QVBoxLayout, QPushButton, QRadioButton, 
-    QHBoxLayout, QInputDialog, QCheckBox, QWidget
-)
-import os
 
-# Define a UniWien color palette
-UNIWEN_COLORS = ["#002147", "#d71920", "#ffcc00", "#4e7ab1", "#8fb339", "#6d6e70", "#005f83", "#ff9d00"]
+# Example data (replace with your actual data)
+angle = np.linspace(10, 50, 100)  # 2θ values
+intensity = np.random.normal(5000, 1000, 100)  # Simulated intensity data
 
-class XRDPlotter(QMainWindow):
-    def __init__(self):
-        super().__init__()
+# Add a fake baseline drift for demonstration
+intensity += 100 * (angle - 10)  # Simulated baseline drift
 
-        self.setWindowTitle("XRD Data Plotter")
-        self.file_list = []
+# Linear baseline correction
+coefficients = np.polyfit(angle, intensity, 1)  # Fit a straight line
+baseline = np.polyval(coefficients, angle)  # Calculate baseline
+corrected_intensity = intensity - baseline  # Subtract baseline
 
-        # Central widget and layout
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
-
-        # File list widget
-        self.list_widget = QListWidget()
-        layout.addWidget(self.list_widget)
-
-        # Add and Remove buttons
-        button_layout = QHBoxLayout()
-        layout.addLayout(button_layout)
-
-        self.add_button = QPushButton("Add XRD Data Files")
-        self.add_button.clicked.connect(self.add_files)
-        button_layout.addWidget(self.add_button)
-
-        self.remove_button = QPushButton("Remove Selected Files")
-        self.remove_button.clicked.connect(self.remove_files)
-        button_layout.addWidget(self.remove_button)
-
-        # Plot options
-        self.radio_separate = QRadioButton("Separate")
-        self.radio_separate.setChecked(True)
-        self.radio_overlap = QRadioButton("Overlap")
-        plot_option_layout = QHBoxLayout()
-        plot_option_layout.addWidget(self.radio_separate)
-        plot_option_layout.addWidget(self.radio_overlap)
-        layout.addLayout(plot_option_layout)
-
-        # Plot button
-        self.plot_button = QPushButton("Plot Data")
-        self.plot_button.clicked.connect(self.plot_data)
-        layout.addWidget(self.plot_button)
-
-        # Remove Y-Axis Labels option
-        self.remove_y_axis_labels_checkbox = QCheckBox("Remove Y-Axis Labels")
-        layout.addWidget(self.remove_y_axis_labels_checkbox)
-
-    def add_files(self):
-        filenames, _ = QFileDialog.getOpenFileNames(self, "Select XRD Data Files", "", "All Files (*);;TXT Files (*.txt);;CSV Files (*.csv);;TSV Files (*.tsv)")
-        for filename in filenames:
-            color = self.get_default_color()
-            
-            # Prompt for a custom name
-            custom_name, ok = QInputDialog.getText(self, "Custom Name", f"Enter a custom name for {os.path.basename(filename)}:")
-            if not ok or not custom_name:  # If the user cancels or doesn't enter a name, use the base name
-                custom_name = os.path.splitext(os.path.basename(filename))[0]
-            
-            self.file_list.append({"filename": filename, "color": color, "custom_name": custom_name})
-            self.list_widget.addItem(f"{filename} (Color: {color})")
-
-    def remove_files(self):
-        for item in self.list_widget.selectedItems():
-            index = self.list_widget.row(item)
-            self.list_widget.takeItem(index)
-            self.file_list.pop(index)
-
-    def get_default_color(self):
-        color_index = len(self.file_list) % len(UNIWEN_COLORS)
-        return UNIWEN_COLORS[color_index]
-
-    def parse_xrd_file(self, filename):
-        if filename.endswith(".tsv"):
-            # Read TSV file assuming columns are "Angle" and "Intensity"
-            data = pd.read_csv(filename, sep='\t', header=None, names=["Angle", "Intensity"])
-        else:
-            with open(filename, 'r') as file:
-                lines = file.readlines()
-
-            # Find the start of the scan points data
-            data_start = None
-            for i, line in enumerate(lines):
-                if "[Scan points]" in line:
-                    data_start = i + 1
-                    break
-
-            if data_start is None:
-                raise ValueError("Scan points data not found in the file.")
-
-            # Extract the scan points data
-            data = []
-            for line in lines[data_start:]:
-                line = line.strip()
-                if re.match(r'^\s*$', line):  # Skip empty lines
-                    continue
-                parts = line.split(',')
-                try:
-                    angle = float(parts[0])
-                    intensity = float(parts[2])
-                    data.append((angle, intensity))
-                except ValueError:
-                    continue
-
-            if not data:
-                raise ValueError("No valid scan points data found.")
-
-            data = pd.DataFrame(data, columns=["Angle", "Intensity"])
-
-        return data
-
-    def plot_data(self):
-        if not self.file_list:
-            return
-
-        plot_option = "Separate" if self.radio_separate.isChecked() else "Overlap"
-        remove_y_axis_labels = self.remove_y_axis_labels_checkbox.isChecked()
-
-        if plot_option == "Separate":
-            self.plot_in_separate_window(remove_y_axis_labels)
-        else:
-            self.plot_in_overlap_window(remove_y_axis_labels)
-
-    def plot_in_separate_window(self, remove_y_axis_labels):
-        plt.figure(figsize=(10, 6))
-        offset = 0
-        offset_factor = 1  # Control spacing between plots
-        for file_info in self.file_list:
-            try:
-                data = self.parse_xrd_file(file_info["filename"])
-                twotheta = data["Angle"]
-                intensity = data["Intensity"] + offset
-                
-                # Use the custom name for the legend
-                label = file_info["custom_name"]
-                sns.lineplot(x=twotheta, y=intensity, label=label, color=file_info["color"])
-                
-                offset += intensity.max() * offset_factor
-            except Exception as e:
-                print(f"Error reading file {file_info['filename']}: {e}")
-                return
-
-        plt.xlabel("2θ (degrees)")
-        plt.ylabel("Intensity (a.u.)")
-        plt.title("XRD Data")
-        plt.legend()
-        plt.grid(True)
-        if remove_y_axis_labels:
-            plt.yticks([])  # Remove y-axis ticks
-        plt.show()
-
-    def plot_in_overlap_window(self, remove_y_axis_labels):
-        plt.figure(figsize=(10, 6))
-        for file_info in self.file_list:
-            try:
-                data = self.parse_xrd_file(file_info["filename"])
-                twotheta = data["Angle"]
-                intensity = data["Intensity"]
-                
-                # Use the custom name for the legend
-                label = file_info["custom_name"]
-                sns.lineplot(x=twotheta, y=intensity, label=label, color=file_info["color"])
-            except Exception as e:
-                print(f"Error reading file {file_info['filename']}: {e}")
-                return
-
-        plt.xlabel("2θ (degrees)")
-        plt.ylabel("Intensity (a.u.)")
-        plt.title("XRD Data")
-        plt.legend()
-        plt.grid(True)
-        if remove_y_axis_labels:
-            plt.yticks([])  # Remove y-axis ticks
-        plt.show()
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = XRDPlotter()
-    window.show()
-    sys.exit(app.exec_())
+# Plot original and corrected data
+plt.figure(figsize=(10, 6))
+plt.plot(angle, intensity, label="Original Data", color="blue")
+plt.plot(angle, baseline, label="Baseline", color="red", linestyle="--")
+plt.plot(angle, corrected_intensity, label="Corrected Data", color="green")
+plt.xlabel("2θ (degrees)")
+plt.ylabel("Intensity (a.u.)")
+plt.title("XRD Data with Linear Baseline Correction")
+plt.legend()
+plt.grid(True)
+plt.show()

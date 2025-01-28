@@ -1,0 +1,205 @@
+import os
+import csv
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import matplotlib.pyplot as plt
+
+
+def extract_data(file_path):
+    """Extract data from a CSV file."""
+    time_data = []
+    weight_data = []
+    temperature_data = []
+
+    with open(file_path, 'r') as file:
+        reader = csv.reader(file)
+        headers = next(reader, None)  # Read the header line
+        if headers and 'Time' in headers:
+            time_idx = headers.index('Time')
+            weight_idx = headers.index('Unsubtracted Weight')
+            temp_idx = headers.index('Program Temperature')
+
+            for row in reader:
+                if len(row) > max(time_idx, weight_idx, temp_idx):
+                    time_data.append(float(row[time_idx]))
+                    weight_data.append(float(row[weight_idx]))
+                    temperature_data.append(float(row[temp_idx]))
+
+    return time_data, weight_data, temperature_data
+
+
+def plot_temperature_vs_weight_multiple(file_paths):
+    """Plot temperature against unsubtracted weight for multiple files."""
+    plt.figure(figsize=(10, 6))
+    for file_path in file_paths:
+        _, weight, temperature = extract_data(file_path)
+
+        # Calculate weight lost (%)
+        initial_weight = weight[0]
+        final_weight = weight[-1]
+        weight_lost = (1 - final_weight / initial_weight) * 100
+
+        plt.plot(temperature, weight, label=f"{os.path.basename(file_path)}")
+        plt.text(
+            temperature[-1],
+            weight[-1],
+            f"{weight_lost:.2f}",
+            fontsize=8,
+            color="black",
+        )
+
+    plt.xlabel("Temperature (°C)")
+    plt.ylabel("Unsubtracted Weight (g)")
+    plt.title("Temperature vs. Weight")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_normalized_weight_multiple(file_paths):
+    """Plot normalized weight starting at 100°C for multiple files."""
+    plt.figure(figsize=(10, 6))
+    for file_path in file_paths:
+        _, weight, temperature = extract_data(file_path)
+
+        # Find the index of the first temperature >= 100
+        start_index = next((i for i, t in enumerate(temperature) if t >= 100), None)
+        if start_index is None:
+            messagebox.showwarning("Warning", f"No data points found above 100°C in {file_path}.")
+            continue
+
+        # Normalize weight using the mass at 100°C
+        initial_weight = weight[start_index]
+        normalized_weight = [w / initial_weight * 100 for w in weight[start_index:]]
+        temperature_above_100 = temperature[start_index:]
+
+        # Calculate weight lost (%)
+        final_weight = weight[-1]
+        weight_lost = (1 - final_weight / initial_weight) * 100
+
+        plt.plot(temperature_above_100, normalized_weight, label=f"{os.path.basename(file_path)}")
+        plt.text(
+            temperature_above_100[-1],
+            normalized_weight[-1],
+            f"{weight_lost:.2f}",
+            fontsize=8,
+            color="black",
+        )
+
+    plt.xlabel("Temperature (°C)")
+    plt.ylabel("Normalized Weight (%)")
+    plt.title("Normalized Weight vs. Temperature")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+def add_files(file_listbox):
+    """Add files to the listbox."""
+    file_paths = filedialog.askopenfilenames(
+        title="Select CSV Files", filetypes=[("CSV Files", "*.csv")]
+    )
+    for file_path in file_paths:
+        if file_path not in file_listbox.get(0, tk.END):  # Avoid duplicates
+            file_listbox.insert(tk.END, file_path)
+
+
+def remove_selected_files(file_listbox):
+    """Remove selected files from the listbox."""
+    selected_indices = file_listbox.curselection()
+    for index in reversed(selected_indices):  # Reverse to avoid index shifting
+        file_listbox.delete(index)
+
+
+def plot_selected_temperature_vs_weight(file_listbox):
+    """Plot temperature vs weight for selected files."""
+    file_paths = file_listbox.get(0, tk.END)
+    if not file_paths:
+        messagebox.showinfo("No Files Selected", "Please add files to plot.")
+        return
+    plot_temperature_vs_weight_multiple(file_paths)
+
+
+def plot_selected_normalized_weight(file_listbox):
+    """Plot normalized weight for selected files."""
+    file_paths = file_listbox.get(0, tk.END)
+    if not file_paths:
+        messagebox.showinfo("No Files Selected", "Please add files to plot.")
+        return
+    plot_normalized_weight_multiple(file_paths)
+
+
+def main():
+    """Main function to create the GUI."""
+    root = tk.Tk()
+    root.title("CSV Plotter")
+    root.geometry("500x400")
+
+    # Set University of Vienna color scheme
+    uni_blue = "#0056A8"  # Uni Wien blue
+    uni_white = "#FFFFFF"
+
+    root.configure(bg=uni_blue)
+
+    # Frame for file management
+    file_frame = tk.Frame(root, bg=uni_blue)
+    file_frame.pack(pady=10)
+
+    label = tk.Label(file_frame, text="Selected Files", bg=uni_blue, fg=uni_white, font=("Arial", 12))
+    label.grid(row=0, column=0, columnspan=2)
+
+    file_listbox = tk.Listbox(file_frame, width=60, height=10)
+    file_listbox.grid(row=1, column=0, columnspan=2, padx=10, pady=5)
+
+    add_button = tk.Button(
+        file_frame, text="Add Files", command=lambda: add_files(file_listbox), bg=uni_white, fg=uni_blue
+    )
+    add_button.grid(row=2, column=0, padx=5, pady=5)
+
+    remove_button = tk.Button(
+        file_frame, text="Remove Selected", command=lambda: remove_selected_files(file_listbox), bg=uni_white, fg=uni_blue
+    )
+    remove_button.grid(row=2, column=1, padx=5, pady=5)
+
+    # Frame for plotting options
+    plot_frame = tk.Frame(root, bg=uni_blue)
+    plot_frame.pack(pady=10)
+
+    plot_temp_button = tk.Button(
+        plot_frame,
+        text="Plot Temp vs Weight",
+        command=lambda: plot_selected_temperature_vs_weight(file_listbox),
+        bg=uni_white,
+        fg=uni_blue,
+        font=("Arial", 12),
+    )
+    plot_temp_button.grid(row=0, column=0, padx=10, pady=10)
+
+    plot_normalized_button = tk.Button(
+        plot_frame,
+        text="Plot Normalized Weight",
+        command=lambda: plot_selected_normalized_weight(file_listbox),
+        bg=uni_white,
+        fg=uni_blue,
+        font=("Arial", 12),
+    )
+    plot_normalized_button.grid(row=0, column=1, padx=10, pady=10)
+
+    # Exit button
+    exit_button = tk.Button(
+        root,
+        text="Exit",
+        command=root.destroy,
+        bg=uni_white,
+        fg=uni_blue,
+        font=("Arial", 12),
+    )
+    exit_button.pack(pady=10)
+
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()

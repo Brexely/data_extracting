@@ -1,4 +1,5 @@
 import sys
+import os
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -10,7 +11,7 @@ from PyQt5.QtWidgets import (
 
 # Define Uni Wien color palette
 UNIWEN_COLORS = ["#002147", "#d71920", "#ffcc00", "#4e7ab1", "#8fb339", "#6d6e70", "#005f83", "#ff9d00"]
-#test
+
 class FTIRPlotter(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -39,23 +40,18 @@ class FTIRPlotter(QMainWindow):
         self.remove_button.clicked.connect(self.remove_files)
         button_layout.addWidget(self.remove_button)
 
-        # Plot options
-        self.radio_staggered = QRadioButton("Staggered")
-        self.radio_staggered.setChecked(True)
-        self.radio_overlap = QRadioButton("Overlap")
-        plot_option_layout = QHBoxLayout()
-        plot_option_layout.addWidget(self.radio_staggered)
-        plot_option_layout.addWidget(self.radio_overlap)
-        layout.addLayout(plot_option_layout)
-
-        # Plot button
-        self.plot_button = QPushButton("Plot Data")
-        self.plot_button.clicked.connect(self.plot_data)
-        layout.addWidget(self.plot_button)
-
         # Remove Y-Axis Labels option
         self.remove_y_axis_labels_checkbox = QCheckBox("Remove Y-Axis Labels")
         layout.addWidget(self.remove_y_axis_labels_checkbox)
+
+        # Plot buttons
+        self.plot_button = QPushButton("Plot Data (Separately)")
+        self.plot_button.clicked.connect(self.plot_separately)
+        layout.addWidget(self.plot_button)
+
+        self.plot_and_save_button = QPushButton("Plot and Save All (Combined)")
+        self.plot_and_save_button.clicked.connect(self.plot_and_save_all)
+        layout.addWidget(self.plot_and_save_button)
 
     def add_files(self):
         filenames, _ = QFileDialog.getOpenFileNames(self, "Select FTIR Data Files", "", "All Files (*);;TXT Files (*.txt);;CSV Files (*.csv)")
@@ -84,44 +80,35 @@ class FTIRPlotter(QMainWindow):
             print(f"Error reading file {filename}: {e}")
             return pd.DataFrame()
 
-    def plot_data(self):
+    def plot_separately(self):
         if not self.file_list:
             return
 
-        plot_option = "Staggered" if self.radio_staggered.isChecked() else "Overlap"
         remove_y_axis_labels = self.remove_y_axis_labels_checkbox.isChecked()
 
-        if plot_option == "Staggered":
-            self.plot_in_staggered_window(remove_y_axis_labels)
-        else:
-            self.plot_in_overlap_window(remove_y_axis_labels)
-
-    def plot_in_staggered_window(self, remove_y_axis_labels):
-        plt.figure(figsize=(10, 6))
-        offset = 0
-        offset_factor = 0.3  # Control spacing between plots
         for file_info in self.file_list:
+            plt.figure(figsize=(10, 6))
             try:
                 data = self.parse_ftir_file(file_info["filename"])
                 if not data.empty:
                     wavenumber = data["Wavenumber"]
-                    transmittance = data["Transmittance"] + offset
-                    sns.lineplot(x=wavenumber, y=transmittance, label=file_info["filename"].split('/')[-1], color=file_info["color"])
-                    offset += transmittance.max() * offset_factor
+                    transmittance = data["Transmittance"]
+                    sns.lineplot(x=wavenumber, y=transmittance, color=file_info["color"])
+                    plt.xlim(4000, 400)  # Set x-axis limits from 4000 to 400 cm^-1
+                    plt.xlabel("Wavenumber (cm^-1)")
+                    plt.ylabel("Transmittance")
+                    plt.title(f"FTIR Data: {file_info['filename'].split('/')[-1]}")
+                    plt.grid(True)
+                    if remove_y_axis_labels:
+                        plt.yticks([])  # Remove y-axis ticks
+                    plt.show()
             except Exception as e:
                 print(f"Error plotting data for file {file_info['filename']}: {e}")
 
-        plt.xlim(4000, 400)  # Set x-axis limits from 4000 to 400 cm^-1
-        plt.xlabel("Wavenumber (cm^-1)")
-        plt.ylabel("Transmittance")
-        plt.title("FTIR Data")
-        plt.legend()
-        plt.grid(True)
-        if remove_y_axis_labels:
-            plt.yticks([])  # Remove y-axis ticks
-        plt.show()
+    def plot_and_save_all(self):
+        if not self.file_list:
+            return
 
-    def plot_in_overlap_window(self, remove_y_axis_labels):
         plt.figure(figsize=(10, 6))
         for file_info in self.file_list:
             try:
@@ -136,11 +123,17 @@ class FTIRPlotter(QMainWindow):
         plt.xlim(4000, 400)  # Set x-axis limits from 4000 to 400 cm^-1
         plt.xlabel("Wavenumber (cm^-1)")
         plt.ylabel("Transmittance")
-        plt.title("FTIR Data")
+        plt.title("FTIR Data (Combined)")
         plt.legend()
         plt.grid(True)
-        if remove_y_axis_labels:
-            plt.yticks([])  # Remove y-axis ticks
+
+        # Save the plot
+        output_file = QFileDialog.getExistingDirectory(self, "Select Folder to Save Plot")
+        if output_file:
+            save_path = os.path.join(output_file, "ftir_combined_plot.png")
+            plt.savefig(save_path, dpi=300)
+            print(f"Combined plot saved to {save_path}")
+
         plt.show()
 
 if __name__ == "__main__":
