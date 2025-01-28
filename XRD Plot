@@ -1,26 +1,260 @@
-import numpy as np
+import sys
+import re
+import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QFileDialog, QListWidget,
+    QVBoxLayout, QPushButton, QRadioButton,
+    QHBoxLayout, QInputDialog, QCheckBox, QWidget, QLineEdit
+)
+import os
+from scipy import sparse
+from scipy.sparse.linalg import spsolve
 
-# Example data (replace with your actual data)
-angle = np.linspace(10, 50, 100)  # 2θ values
-intensity = np.random.normal(5000, 1000, 100)  # Simulated intensity data
+# Define a UniWien color palette
+UNIWEN_COLORS = ["#002147", "#d71920", "#ffcc00", "#4e7ab1", "#8fb339", "#6d6e70", "#005f83", "#ff9d00"]
 
-# Add a fake baseline drift for demonstration
-intensity += 100 * (angle - 10)  # Simulated baseline drift
+class XRDPlotter(QMainWindow):
+    def __init__(self):
+        super().__init__()
 
-# Linear baseline correction
-coefficients = np.polyfit(angle, intensity, 1)  # Fit a straight line
-baseline = np.polyval(coefficients, angle)  # Calculate baseline
-corrected_intensity = intensity - baseline  # Subtract baseline
+        self.setWindowTitle("XRD Data Plotter")
+        self.file_list = []
 
-# Plot original and corrected data
-plt.figure(figsize=(10, 6))
-plt.plot(angle, intensity, label="Original Data", color="blue")
-plt.plot(angle, baseline, label="Baseline", color="red", linestyle="--")
-plt.plot(angle, corrected_intensity, label="Corrected Data", color="green")
-plt.xlabel("2θ (degrees)")
-plt.ylabel("Intensity (a.u.)")
-plt.title("XRD Data with Linear Baseline Correction")
-plt.legend()
-plt.grid(True)
-plt.show()
+        # Central widget and layout
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
+
+        # File list widget
+        self.list_widget = QListWidget()
+        layout.addWidget(self.list_widget)
+
+        # Add and Remove buttons
+        button_layout = QHBoxLayout()
+        layout.addLayout(button_layout)
+
+        self.add_button = QPushButton("Add XRD Data Files")
+        self.add_button.clicked.connect(self.add_files)
+        button_layout.addWidget(self.add_button)
+
+        self.remove_button = QPushButton("Remove Selected Files")
+        self.remove_button.clicked.connect(self.remove_files)
+        button_layout.addWidget(self.remove_button)
+
+        # Plot options
+        self.radio_separate = QRadioButton("Separate")
+        self.radio_separate.setChecked(True)
+        self.radio_overlap = QRadioButton("Overlap")
+        plot_option_layout = QHBoxLayout()
+        plot_option_layout.addWidget(self.radio_separate)
+        plot_option_layout.addWidget(self.radio_overlap)
+        layout.addLayout(plot_option_layout)
+
+        # Plot button
+        self.plot_button = QPushButton("Plot Data")
+        self.plot_button.clicked.connect(self.plot_data)
+        layout.addWidget(self.plot_button)
+
+        # Remove Y-Axis Labels option
+        self.remove_y_axis_labels_checkbox = QCheckBox("Remove Y-Axis Labels")
+        layout.addWidget(self.remove_y_axis_labels_checkbox)
+
+        # Ignore data below 3 degrees option
+        self.ignore_below_3_checkbox = QCheckBox("Ignore Data Below 3 Degrees")
+        layout.addWidget(self.ignore_below_3_checkbox)
+
+        # X-Axis Tick input
+        self.x_axis_ticks_input = QLineEdit(self)
+        self.x_axis_ticks_input.setPlaceholderText("Enter step size for x-axis ticks (e.g., 5)")
+        layout.addWidget(self.x_axis_ticks_input)
+
+        # Baseline correction option
+        self.baseline_correction_checkbox = QCheckBox("Apply ALS Baseline Correction")
+        layout.addWidget(self.baseline_correction_checkbox)
+
+    def add_files(self):
+        filenames, _ = QFileDialog.getOpenFileNames(self, "Select XRD Data Files", "",
+                                                    "All Files (*);;TXT Files (*.txt);;CSV Files (*.csv);;TSV Files (*.tsv)")
+        for filename in filenames:
+            color = self.get_default_color()
+
+            # Prompt for a custom name
+            custom_name, ok = QInputDialog.getText(self, "Custom Name", f"Enter a custom name for {os.path.basename(filename)}:")
+            if not ok or not custom_name:  # If the user cancels or doesn't enter a name, use the base name
+                custom_name = os.path.splitext(os.path.basename(filename))[0]
+
+            self.file_list.append({"filename": filename, "color": color, "custom_name": custom_name})
+            self.list_widget.addItem(f"{custom_name} (Color: {color})")
+
+    def remove_files(self):
+        for item in self.list_widget.selectedItems():
+            index = self.list_widget.row(item)
+            self.list_widget.takeItem(index)
+            self.file_list.pop(index)
+
+    def get_default_color(self):
+        color_index = len(self.file_list) % len(UNIWEN_COLORS)
+        return UNIWEN_COLORS[color_index]
+
+    def parse_xrd_file(self, filename):
+        if filename.endswith(".tsv"):
+            data = pd.read_csv(filename, sep='\t', header=None, names=["Angle", "Intensity"])
+        else:
+            with open(filename, 'r') as file:
+                lines = file.readlines()
+
+            data_start = None
+            for i, line in enumerate(lines):
+                if "[Scan points]" in line:
+                    data_start = i + 1
+                    break
+
+            if data_start is None:
+                raise ValueError(f"No scan points found in {filename}.")
+
+            data = []
+            for line in lines[data_start:]:
+                line = line.strip()
+                if re.match(r'^\s*$', line):  # Skip empty lines
+                    continue
+                parts = line.split(',')
+                if len(parts) >= 3:
+                    try:
+                        angle = float(parts[0])
+                        intensity = float(parts[2])
+                        data.append((angle, intensity))
+                    except ValueError:
+                        continue
+
+            if not data:
+                raise ValueError(f"No valid data found in {filename}.")
+
+            data = pd.DataFrame(data, columns=["Angle", "Intensity"])
+
+        # Ensure data contains no NaNs
+        data = data.dropna()
+
+        return data
+
+    def als_baseline_correction(self, intensity, lam=1e5, p=0.01, niter=10):
+        intensity = np.asarray(intensity, dtype=np.float64)
+        if len(intensity.shape) > 1:
+            raise ValueError("Intensity data must be 1D for baseline correction.")
+
+        L = len(intensity)
+        D = sparse.diags([1, -2, 1], [0, -1, -2], shape=(L, L-2))  # Corrected D matrix
+        w = np.ones(L)
+
+        for i in range(niter):
+            W = sparse.diags(w, 0)
+            Z = W + lam * D.dot(D.T)
+            baseline = spsolve(Z, w * intensity)
+            w = p * (intensity > baseline) + (1 - p) * (intensity <= baseline)
+
+        return intensity - baseline
+
+    def plot_data(self):
+        if not self.file_list:
+            return
+
+        plot_option = "Separate" if self.radio_separate.isChecked() else "Overlap"
+        remove_y_axis_labels = self.remove_y_axis_labels_checkbox.isChecked()
+        ignore_below_3 = self.ignore_below_3_checkbox.isChecked()
+        apply_baseline_correction = self.baseline_correction_checkbox.isChecked()
+
+        # Get x-axis ticks step size from input
+        x_ticks_input = self.x_axis_ticks_input.text()
+        if x_ticks_input:
+            try:
+                step_size = float(x_ticks_input)
+                x_max = max(self.parse_xrd_file(file_info["filename"])["Angle"].max() for file_info in self.file_list)
+                x_ticks = np.arange(0, x_max + step_size, step_size)
+            except ValueError:
+                print("Invalid x-axis step size.")
+                x_ticks = None
+        else:
+            x_ticks = None
+
+        if plot_option == "Separate":
+            self.plot_in_separate_window(remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction)
+        else:
+            self.plot_in_overlap_window(remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction)
+
+    def filter_data(self, data, ignore_below_3):
+        if ignore_below_3:
+            data = data[data["Angle"] >= 3]
+        return data
+
+    def plot_in_separate_window(self, remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction):
+        plt.figure(figsize=(10, 6))
+        offset = 0
+        offset_factor = 0.5  # Control spacing between plots
+        for file_info in self.file_list:
+            try:
+                data = self.parse_xrd_file(file_info["filename"])
+                data = self.filter_data(data, ignore_below_3)
+                twotheta = data["Angle"]
+                intensity = data["Intensity"]
+
+                # Apply baseline correction if selected
+                if apply_baseline_correction:
+                    intensity = self.als_baseline_correction(intensity)
+
+                intensity = intensity + offset
+                label = file_info["custom_name"]
+                sns.lineplot(x=twotheta, y=intensity, label=str(label), color=file_info["color"])
+
+                offset += intensity.max() * offset_factor
+            except Exception as e:
+                print(f"Error reading file {file_info['filename']}: {e}")
+
+        plt.xlabel("2θ (degrees)")
+        plt.ylabel("Intensity (a.u.)")
+        plt.title("XRD Data")
+        plt.legend()
+        plt.grid(True)
+
+        if x_ticks is not None:
+            plt.xticks(x_ticks)  # Use custom x-axis ticks if provided
+        if remove_y_axis_labels:
+            plt.yticks([])  # Remove y-axis ticks
+        plt.show()
+
+    def plot_in_overlap_window(self, remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction):
+        plt.figure(figsize=(10, 6))
+        for file_info in self.file_list:
+            try:
+                data = self.parse_xrd_file(file_info["filename"])
+                data = self.filter_data(data, ignore_below_3)
+                twotheta = data["Angle"]
+                intensity = data["Intensity"]
+
+                # Apply baseline correction if selected
+                if apply_baseline_correction:
+                    intensity = self.als_baseline_correction(intensity)
+
+                label = file_info["custom_name"]
+                sns.lineplot(x=twotheta, y=intensity, label=str(label), color=file_info["color"])
+            except Exception as e:
+                print(f"Error reading file {file_info['filename']}: {e}")
+
+        plt.xlabel("2θ (degrees)")
+        plt.ylabel("Intensity (a.u.)")
+        plt.title("XRD Data")
+        plt.legend()
+        plt.grid(True)
+
+        if x_ticks is not None:
+            plt.xticks(x_ticks)  # Use custom x-axis ticks if provided
+        if remove_y_axis_labels:
+            plt.yticks([])  # Remove y-axis ticks
+        plt.show()
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = XRDPlotter()
+    window.show()
+    sys.exit(app.exec_())
