@@ -7,7 +7,7 @@ import numpy as np
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QListWidget,
     QVBoxLayout, QPushButton, QRadioButton,
-    QHBoxLayout, QInputDialog, QCheckBox, QWidget, QLineEdit
+    QHBoxLayout, QInputDialog, QCheckBox, QWidget, QLineEdit, QColorDialog
 )
 import os
 from scipy import sparse
@@ -44,6 +44,16 @@ class XRDPlotter(QMainWindow):
         self.remove_button.clicked.connect(self.remove_files)
         button_layout.addWidget(self.remove_button)
 
+        # Edit Custom Name button
+        self.edit_name_button = QPushButton("Edit Custom Name")
+        self.edit_name_button.clicked.connect(self.edit_custom_name)
+        button_layout.addWidget(self.edit_name_button)
+
+        # Change Color button
+        self.change_color_button = QPushButton("Change Color")
+        self.change_color_button.clicked.connect(self.change_color)
+        button_layout.addWidget(self.change_color_button)
+
         # Plot options
         self.radio_separate = QRadioButton("Separate")
         self.radio_separate.setChecked(True)
@@ -52,6 +62,11 @@ class XRDPlotter(QMainWindow):
         plot_option_layout.addWidget(self.radio_separate)
         plot_option_layout.addWidget(self.radio_overlap)
         layout.addLayout(plot_option_layout)
+
+        # Offset input for separate plots
+        self.offset_input = QLineEdit(self)
+        self.offset_input.setPlaceholderText("Enter offset for separate plots (e.g., 1000)")
+        layout.addWidget(self.offset_input)
 
         # Plot button
         self.plot_button = QPushButton("Plot Data")
@@ -94,6 +109,35 @@ class XRDPlotter(QMainWindow):
             index = self.list_widget.row(item)
             self.list_widget.takeItem(index)
             self.file_list.pop(index)
+
+    def edit_custom_name(self):
+        selected_items = self.list_widget.selectedItems()
+        if not selected_items:
+            return
+
+        item = selected_items[0]
+        index = self.list_widget.row(item)
+        current_name = self.file_list[index]["custom_name"]
+
+        new_name, ok = QInputDialog.getText(self, "Edit Custom Name", "Enter new custom name:", text=current_name)
+        if ok and new_name:
+            self.file_list[index]["custom_name"] = new_name
+            self.list_widget.item(index).setText(f"{new_name} (Color: {self.file_list[index]['color']})")
+
+    def change_color(self):
+        selected_items = self.list_widget.selectedItems()
+        if not selected_items:
+            return
+
+        item = selected_items[0]
+        index = self.list_widget.row(item)
+        current_color = self.file_list[index]["color"]
+
+        color = QColorDialog.getColor()
+        if color.isValid():
+            new_color = color.name()
+            self.file_list[index]["color"] = new_color
+            self.list_widget.item(index).setText(f"{self.file_list[index]['custom_name']} (Color: {new_color})")
 
     def get_default_color(self):
         color_index = len(self.file_list) % len(UNIWEN_COLORS)
@@ -178,8 +222,18 @@ class XRDPlotter(QMainWindow):
         else:
             x_ticks = None
 
+        # Get offset for separate plots
+        offset = 0
+        offset_input = self.offset_input.text()
+        if offset_input:
+            try:
+                offset = float(offset_input)
+            except ValueError:
+                print("Invalid offset value.")
+                offset = 0
+
         if plot_option == "Separate":
-            self.plot_in_separate_window(remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction)
+            self.plot_in_separate_window(remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction, offset)
         else:
             self.plot_in_overlap_window(remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction)
 
@@ -188,10 +242,9 @@ class XRDPlotter(QMainWindow):
             data = data[data["Angle"] >= 3]
         return data
 
-    def plot_in_separate_window(self, remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction):
+    def plot_in_separate_window(self, remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction, offset):
         plt.figure(figsize=(10, 6))
-        offset = 0
-        offset_factor = 0.5  # Control spacing between plots
+        offset_factor = offset  # Use the user-defined offset
         for file_info in self.file_list:
             try:
                 data = self.parse_xrd_file(file_info["filename"])
@@ -203,11 +256,11 @@ class XRDPlotter(QMainWindow):
                 if apply_baseline_correction:
                     intensity = self.als_baseline_correction(intensity)
 
-                intensity = intensity + offset
+                intensity = intensity + offset_factor
                 label = file_info["custom_name"]
                 sns.lineplot(x=twotheta, y=intensity, label=str(label), color=file_info["color"])
 
-                offset += intensity.max() * offset_factor
+                offset_factor += offset  # Increment by the user-defined offset
             except Exception as e:
                 print(f"Error reading file {file_info['filename']}: {e}")
 
