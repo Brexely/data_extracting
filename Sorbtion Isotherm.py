@@ -50,6 +50,12 @@ class PulsePlotter:
         self.title_entry.grid(row=4, column=1)
         self.title_entry.insert(0, "Pulse Chart (Animated)")
 
+        # Entry for number of points to display at once
+        tk.Label(self.settings_frame, text="Points per Frame:").grid(row=5, column=0)
+        self.points_per_frame_var = tk.StringVar(value="3")
+        self.points_per_frame_entry = tk.Entry(self.settings_frame, textvariable=self.points_per_frame_var)
+        self.points_per_frame_entry.grid(row=5, column=1)
+
         # Button to save animation
         self.btn_save = tk.Button(root, text="Save as GIF", command=self.save_animation, state=tk.DISABLED)
         self.btn_save.pack(pady=10)
@@ -110,6 +116,7 @@ class PulsePlotter:
         marker_style = self.marker_var.get()
         line_color = self.color_var.get()
         title = self.title_entry.get()
+        points_per_frame = int(self.points_per_frame_var.get())
 
         self.ax.clear()
         self.ax.set_xlabel("Pulse Number")
@@ -126,30 +133,33 @@ class PulsePlotter:
         self.progress_label.config(text="Progress: 0%")
 
         def update(frame):
-            if frame < len(self.df):
-                x_data.append(self.df["Pulse Number"].iloc[frame])
-                y_data.append(self.df["Signal"].iloc[frame])
+            if frame * points_per_frame < len(self.df):
+                for i in range(points_per_frame):
+                    idx = frame * points_per_frame + i
+                    if idx < len(self.df):
+                        x_data.append(self.df["Pulse Number"].iloc[idx])
+                        y_data.append(self.df["Signal"].iloc[idx])
                 line.set_data(x_data, y_data)
                 self.ax.relim()
                 self.ax.autoscale_view()
                 self.canvas.draw()
 
                 # Update progress bar and label
-                self.progress_bar["value"] = frame + 1
-                progress_percent = int((frame + 1) / len(self.df) * 100)
+                self.progress_bar["value"] = (frame + 1) * points_per_frame
+                progress_percent = int((frame + 1) * points_per_frame / len(self.df) * 100)
                 self.progress_label.config(text=f"Progress: {progress_percent}%")
                 self.root.update_idletasks()  # Refresh the Tkinter window
 
-                print(f"Frame {frame}: {x_data[-1]}, {y_data[-1]}")  # Debugging print
+                print(f"Frame {frame}: {x_data[-points_per_frame:]}, {y_data[-points_per_frame:]}")  # Debugging print
             return line,
 
-        self.ani = animation.FuncAnimation(self.fig, update, frames=len(self.df), interval=framerate, repeat=True)
+        self.ani = animation.FuncAnimation(self.fig, update, frames=len(self.df)//points_per_frame, interval=framerate, repeat=False)
 
     def save_animation(self):
         if self.ani:
             filename = filedialog.asksaveasfilename(defaultextension=".gif", filetypes=[("GIF files", "*.gif")])
             if filename:
-                writer = PillowWriter(fps=5)
+                writer = PillowWriter(fps=144)
                 self.ani.save(filename, writer=writer)
                 print(f"Animation saved as {filename}")
 
