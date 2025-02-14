@@ -1,0 +1,133 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import tkinter as tk
+from tkinter import filedialog, simpledialog
+
+# Uni Wien Colors
+UNI_WIEN_BLUE = "#002147"
+UNI_WIEN_RED = "#D71920"
+UNI_WIEN_YELLOW = "#FFCC00"
+
+# Function to parse the CSV file
+def parse_csv_file(filename):
+    try:
+        # Read the CSV file with 'latin1' encoding, semicolon delimiter, and comma as decimal
+        data = pd.read_csv(
+            filename,
+            encoding="latin1",
+            delimiter=";",
+            skiprows=19,
+            decimal=","
+        )
+        
+        # Check if the file has the expected columns
+        if data.shape[1] < 2:
+            raise ValueError(f"File {filename} does not have enough columns.")
+        
+        # Rename the columns for easier access
+        data.columns = ["Wavelength", "Absorbance"]
+        
+        # Convert columns to numeric (replace commas with dots if necessary)
+        data["Wavelength"] = pd.to_numeric(data["Wavelength"].str.replace(",", "."), errors="coerce")
+        data["Absorbance"] = pd.to_numeric(data["Absorbance"].str.replace(",", "."), errors="coerce")
+        
+        # Drop any rows with missing values
+        data = data.dropna()
+        
+        return data
+    
+    except Exception as e:
+        print(f"Error reading file {filename}: {e}")
+        return pd.DataFrame(columns=["Wavelength", "Absorbance"])  # Return empty DataFrame if error
+
+# Function to plot the data
+def plot_data(filenames, canvas, min_wavelength=None, max_wavelength=None):
+    plt.clf()  # Clear the previous plot
+    fig, ax = plt.subplots(figsize=(8, 5))
+    
+    # Define a list of Uni Wien colors for multiple plots
+    colors = [UNI_WIEN_BLUE, UNI_WIEN_RED, UNI_WIEN_YELLOW]
+    
+    for idx, filename in enumerate(filenames):
+        data = parse_csv_file(filename)
+        
+        if data.empty:
+            print(f"No data to plot for {filename}.")
+            continue
+        
+        # Filter data based on the specified wavelength range
+        if min_wavelength is not None and max_wavelength is not None:
+            filtered_data = data[(data["Wavelength"] >= min_wavelength) & (data["Wavelength"] <= max_wavelength)]
+        else:
+            filtered_data = data
+        
+        if not filtered_data.empty:
+            ax.plot(filtered_data["Wavelength"], filtered_data["Absorbance"], label=filename.split('/')[-1], color=colors[idx % len(colors)], linewidth=2)
+    
+    # Add labels and title
+    ax.set_xlabel("Wavelength (nm)", fontsize=12, color="black")
+    ax.set_ylabel("Absorbance", fontsize=12, color="black")
+    ax.set_title("UV-Vis Spectrum", fontsize=14, fontweight="bold", color="black")
+    ax.legend(loc="upper right", fontsize=10)
+    ax.grid(True, linestyle="--", alpha=0.6)
+    
+    # Set axes and ticks to black
+    ax.spines["top"].set_color("black")
+    ax.spines["bottom"].set_color("black")
+    ax.spines["left"].set_color("black")
+    ax.spines["right"].set_color("black")
+    ax.tick_params(axis="x", colors="black")
+    ax.tick_params(axis="y", colors="black")
+    
+    # Embed the plot in the Tkinter canvas
+    canvas.figure = fig
+    canvas.draw()
+
+# Function to open a file dialog and load multiple CSV files
+def open_files(canvas):
+    filenames = filedialog.askopenfilenames(filetypes=[("CSV Files", "*.csv")])
+    if filenames:
+        # Prompt for wavelength range
+        min_wavelength = simpledialog.askfloat("Input", "Enter minimum wavelength (nm):", minvalue=0)
+        max_wavelength = simpledialog.askfloat("Input", "Enter maximum wavelength (nm):", minvalue=0)
+        
+        plot_data(filenames, canvas, min_wavelength, max_wavelength)
+
+# Function to plot all data without filtering
+def plot_all_data(filenames, canvas):
+    plot_data(filenames, canvas)
+
+# Main function
+def main():
+    # Create the Tkinter root window
+    root = tk.Tk()
+    root.title("UV-Vis Spectrum Plotter")
+    root.geometry("800x600")
+    
+    # Create a frame for the plot
+    plot_frame = tk.Frame(root)
+    plot_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Create a canvas for the plot
+    canvas = FigureCanvasTkAgg(plt.Figure(), master=plot_frame)
+    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+    
+    # Create a frame for buttons
+    button_frame = tk.Frame(root)
+    button_frame.pack(pady=10)
+    
+    # Create a button to open files
+    open_button = tk.Button(button_frame, text="Open CSV Files", command=lambda: open_files(canvas), bg=UNI_WIEN_BLUE, fg="white", font=("Arial", 12))
+    open_button.pack(side=tk.LEFT, padx=5)
+    
+    # Create a button to plot all data
+    plot_all_button = tk.Button(button_frame, text="Plot All Data", command=lambda: plot_all_data(filenames, canvas), bg=UNI_WIEN_RED, fg="white", font=("Arial", 12))
+    plot_all_button.pack(side=tk.LEFT, padx=5)
+    
+    # Run the Tkinter event loop
+    root.mainloop()
+
+# Entry point
+if __name__ == "__main__":
+    main()
