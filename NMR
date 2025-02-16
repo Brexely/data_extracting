@@ -1,0 +1,160 @@
+import tkinter as tk
+from tkinter import filedialog, ttk
+import nmrglue as ng
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+
+# Global variables
+selected_file = None
+ppm_scale = None
+data = None
+zoom_factor = 1.0
+
+def select_file():
+    global selected_file, ppm_scale, data
+    file_path = filedialog.askopenfilename(
+        title="Select Processed NMR File",
+        filetypes=[("Bruker Processed Data", "1r")]
+    )
+    if file_path:
+        selected_file = file_path
+        label.config(text=f"Selected: {file_path}")
+        
+        # Load data
+        dic, data = ng.bruker.read_pdata(selected_file[:-2])  # Remove '/1r' from path
+        sw = float(dic["procs"]["SW_p"])  # Spectral width
+        sf = float(dic["procs"]["SF"])   # Spectrometer frequency
+        points = len(data)
+        ppm_scale = np.linspace(sw/sf, 0, points)  # Convert Hz to ppm
+        
+        # Update preview plot
+        plot_preview()
+
+def plot_preview():
+    if not selected_file:
+        return
+    
+    # Clear the previous plot
+    ax.clear()
+    
+    # Plot the spectrum
+    ax.plot(ppm_scale, data, color=color_var.get(), linewidth=0.8)
+    ax.invert_xaxis()  # Ensure 0 ppm is on the right
+    ax.set_xlabel("Chemical Shift (ppm)")
+    ax.set_ylabel("Intensity")
+    ax.set_title("NMR Preview")
+    
+    # Set initial zoom and scroll limits
+    ax.set_xlim([float(ppm_min_entry.get()), float(ppm_max_entry.get())])
+    ax.set_ylim([min(data) * 0.9, max(data) * 1.1])
+    
+    # Redraw the canvas
+    canvas.draw()
+
+def on_scroll(event):
+    global zoom_factor
+    if event.inaxes != ax:
+        return
+    
+    # Zoom in or out based on scroll direction
+    base_scale = 1.1
+    xdata = event.xdata  # Current mouse position in x-axis (ppm)
+    
+    if event.button == 'up':
+        zoom_factor /= base_scale
+    elif event.button == 'down':
+        zoom_factor *= base_scale
+    
+    # Get current limits
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    
+    # Calculate new limits
+    new_width = (xlim[1] - xlim[0]) * zoom_factor
+    new_xlim = (xdata - new_width / 2, xdata + new_width / 2)
+    
+    # Apply new limits
+    ax.set_xlim(new_xlim)
+    ax.set_ylim(ylim)
+    canvas.draw()
+
+def update_color(event=None):
+    """Update the plot color when the dropdown selection changes."""
+    if selected_file:
+        plot_preview()
+
+def plot_nmr():
+    if not selected_file:
+        return
+    
+    # Get the current view limits
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    
+    # Filter data based on the current view
+    mask = (ppm_scale >= xlim[0]) & (ppm_scale <= xlim[1])
+    ppm_filtered = ppm_scale[mask]
+    data_filtered = data[mask]
+    
+    # Plot interactive figure
+    fig, ax_new = plt.subplots(figsize=(12, 6), dpi=200)
+    ax_new.plot(ppm_filtered, data_filtered, color=color_var.get(), linewidth=1.5)
+    ax_new.invert_xaxis()  # Ensure 0 ppm is on the right
+    ax_new.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)
+    ax_new.set_xlabel("Chemical Shift (ppm)", fontsize=14)
+    ax_new.set_ylabel("Intensity", fontsize=14)
+    ax_new.set_title("NMR Spectrum", fontsize=16)
+    ax_new.set_ylim([min(data_filtered)*0.9, max(data_filtered)*1.1])  # Adjust intensity range
+    plt.show()
+
+# Main Window
+root = tk.Tk()
+root.title("TopSpin NMR Viewer")
+root.geometry("1000x800")
+selected_file = None
+
+# File selection
+label = tk.Label(root, text="No file selected", wraplength=500)
+label.pack(pady=10)
+button = tk.Button(root, text="Select File", command=select_file)
+button.pack(pady=5)
+
+# PPM Range Selection
+frame_ppm = tk.Frame(root)
+tk.Label(frame_ppm, text="Min PPM:").pack(side=tk.LEFT)
+ppm_min_entry = tk.Entry(frame_ppm, width=5)
+ppm_min_entry.insert(0, "0")
+ppm_min_entry.pack(side=tk.LEFT, padx=5)
+tk.Label(frame_ppm, text="Max PPM:").pack(side=tk.LEFT)
+ppm_max_entry = tk.Entry(frame_ppm, width=5)
+ppm_max_entry.insert(0, "10")
+ppm_max_entry.pack(side=tk.LEFT, padx=5)
+frame_ppm.pack(pady=10)
+
+# Color selection
+color_var = tk.StringVar(value='black')
+tk.Label(root, text="Select Plot Color:").pack()
+color_dropdown = ttk.Combobox(root, textvariable=color_var, values=["black", "blue", "red", "green", "purple"])
+color_dropdown.pack()
+color_dropdown.bind("<<ComboboxSelected>>", update_color)  # Update color when selection changes
+
+# Matplotlib preview canvas
+fig, ax = plt.subplots(figsize=(8, 4), dpi=100)  # Larger preview canvas
+canvas = FigureCanvasTkAgg(fig, master=root)
+canvas.get_tk_widget().pack()
+
+# Add Matplotlib navigation toolbar
+toolbar = NavigationToolbar2Tk(canvas, root)
+toolbar.update()
+canvas.get_tk_widget().pack()
+
+# Connect scroll event handler
+canvas.mpl_connect('scroll_event', on_scroll)
+
+# Plot button
+plot_button = tk.Button(root, text="Plot NMR Spectrum", command=plot_nmr)
+plot_button.pack(pady=10)
+
+# Run application
+root.mainloop()
