@@ -146,6 +146,9 @@ class XRDPlotter(QMainWindow):
     def parse_xrd_file(self, filename):
         if filename.endswith(".tsv"):
             data = pd.read_csv(filename, sep='\t', header=None, names=["Angle", "Intensity"])
+        elif filename.endswith(".xy"):
+            # Read .xy files with space-separated values
+            data = pd.read_csv(filename, sep='\s+', header=None, names=["Angle", "Intensity"])
         else:
             with open(filename, 'r') as file:
                 lines = file.readlines()
