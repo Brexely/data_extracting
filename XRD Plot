@@ -2,13 +2,16 @@ import sys
 import re
 import pandas as pd
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 import seaborn as sns
 import numpy as np
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QListWidget,
     QVBoxLayout, QPushButton, QRadioButton,
-    QHBoxLayout, QInputDialog, QCheckBox, QWidget, QLineEdit, QColorDialog
+    QHBoxLayout, QInputDialog, QCheckBox, QWidget, QLineEdit, QColorDialog, QLabel
 )
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QPixmap
 import os
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
@@ -30,6 +33,8 @@ class XRDPlotter(QMainWindow):
 
         # File list widget
         self.list_widget = QListWidget()
+        self.list_widget.setDragDropMode(QListWidget.InternalMove)
+        self.list_widget.model().rowsMoved.connect(self.reorder_files)  # Connect to reorder_files
         layout.addWidget(self.list_widget)
 
         # Add and Remove buttons
@@ -58,9 +63,11 @@ class XRDPlotter(QMainWindow):
         self.radio_separate = QRadioButton("Separate")
         self.radio_separate.setChecked(True)
         self.radio_overlap = QRadioButton("Overlap")
+        self.radio_3d = QRadioButton("3D Plot")
         plot_option_layout = QHBoxLayout()
         plot_option_layout.addWidget(self.radio_separate)
         plot_option_layout.addWidget(self.radio_overlap)
+        plot_option_layout.addWidget(self.radio_3d)
         layout.addLayout(plot_option_layout)
 
         # Offset input for separate plots
@@ -72,6 +79,16 @@ class XRDPlotter(QMainWindow):
         self.plot_button = QPushButton("Plot Data")
         self.plot_button.clicked.connect(self.plot_data)
         layout.addWidget(self.plot_button)
+
+        # Preview button
+        self.preview_button = QPushButton("Preview Plot")
+        self.preview_button.clicked.connect(self.preview_plot)
+        layout.addWidget(self.preview_button)
+
+        # Preview label
+        self.preview_label = QLabel()
+        self.preview_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.preview_label)
 
         # Remove Y-Axis Labels option
         self.remove_y_axis_labels_checkbox = QCheckBox("Remove Y-Axis Labels")
@@ -203,11 +220,24 @@ class XRDPlotter(QMainWindow):
 
         return intensity - baseline
 
-    def plot_data(self):
+    def reorder_files(self):
+        """Update the file_list to match the new order of items in the QListWidget."""
+        new_file_list = []
+        for i in range(self.list_widget.count()):
+            item_text = self.list_widget.item(i).text()
+            custom_name = item_text.split(" (Color: ")[0]
+            for file_info in self.file_list:
+                if file_info["custom_name"] == custom_name:
+                    new_file_list.append(file_info)
+                    break
+        self.file_list = new_file_list
+
+    def preview_plot(self):
         if not self.file_list:
             return
 
         plot_option = "Separate" if self.radio_separate.isChecked() else "Overlap"
+        is_3d = self.radio_3d.isChecked()
         remove_y_axis_labels = self.remove_y_axis_labels_checkbox.isChecked()
         ignore_below_3 = self.ignore_below_3_checkbox.isChecked()
         apply_baseline_correction = self.baseline_correction_checkbox.isChecked()
@@ -235,10 +265,125 @@ class XRDPlotter(QMainWindow):
                 print("Invalid offset value.")
                 offset = 0
 
-        if plot_option == "Separate":
-            self.plot_in_separate_window(remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction, offset)
+        if is_3d:
+            fig = plt.figure(figsize=(6, 4))
+            ax = fig.add_subplot(111, projection='3d')
+            for i, file_info in enumerate(self.file_list):
+                try:
+                    data = self.parse_xrd_file(file_info["filename"])
+                    data = self.filter_data(data, ignore_below_3)
+                    twotheta = data["Angle"]
+                    intensity = data["Intensity"]
+
+                    # Apply baseline correction if selected
+                    if apply_baseline_correction:
+                        intensity = self.als_baseline_correction(intensity)
+
+                    ax.plot(twotheta, [i] * len(twotheta), intensity, label=file_info["custom_name"], color=file_info["color"])
+                except Exception as e:
+                    print(f"Error reading file {file_info['filename']}: {e}")
+
+            ax.set_xlabel("2θ (degrees)")
+            ax.set_ylabel("File Index")
+            ax.set_zlabel("Intensity (a.u.)")
+            ax.legend()
         else:
-            self.plot_in_overlap_window(remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction)
+            fig, ax = plt.subplots(figsize=(6, 4))
+            offset_factor = offset  # Use the user-defined offset
+            for file_info in self.file_list:
+                try:
+                    data = self.parse_xrd_file(file_info["filename"])
+                    data = self.filter_data(data, ignore_below_3)
+                    twotheta = data["Angle"]
+                    intensity = data["Intensity"]
+
+                    # Apply baseline correction if selected
+                    if apply_baseline_correction:
+                        intensity = self.als_baseline_correction(intensity)
+
+                    if plot_option == "Separate":
+                        intensity = intensity + offset_factor
+                        offset_factor += offset  # Increment by the user-defined offset
+
+                    ax.plot(twotheta, intensity, label=file_info["custom_name"], color=file_info["color"])
+                except Exception as e:
+                    print(f"Error reading file {file_info['filename']}: {e}")
+
+            ax.set_xlabel("2θ (degrees)")
+            ax.set_ylabel("Intensity (a.u.)")
+            ax.legend()
+            ax.grid(True)
+
+            if x_ticks is not None:
+                ax.set_xticks(x_ticks)  # Use custom x-axis ticks if provided
+            if remove_y_axis_labels:
+                ax.set_yticks([])  # Remove y-axis ticks
+
+        plt.tight_layout()
+        fig.savefig("preview.png")
+        self.preview_label.setPixmap(QPixmap("preview.png"))
+        plt.close(fig)
+
+    def plot_data(self):
+        if not self.file_list:
+            return
+
+        plot_option = "Separate" if self.radio_separate.isChecked() else "Overlap"
+        is_3d = self.radio_3d.isChecked()
+        remove_y_axis_labels = self.remove_y_axis_labels_checkbox.isChecked()
+        ignore_below_3 = self.ignore_below_3_checkbox.isChecked()
+        apply_baseline_correction = self.baseline_correction_checkbox.isChecked()
+
+        # Get x-axis ticks step size from input
+        x_ticks_input = self.x_axis_ticks_input.text()
+        if x_ticks_input:
+            try:
+                step_size = float(x_ticks_input)
+                x_max = max(self.parse_xrd_file(file_info["filename"])["Angle"].max() for file_info in self.file_list)
+                x_ticks = np.arange(0, x_max + step_size, step_size)
+            except ValueError:
+                print("Invalid x-axis step size.")
+                x_ticks = None
+        else:
+            x_ticks = None
+
+        # Get offset for separate plots
+        offset = 0
+        offset_input = self.offset_input.text()
+        if offset_input:
+            try:
+                offset = float(offset_input)
+            except ValueError:
+                print("Invalid offset value.")
+                offset = 0
+
+        if is_3d:
+            fig = plt.figure(figsize=(10, 6))
+            ax = fig.add_subplot(111, projection='3d')
+            for i, file_info in enumerate(self.file_list):
+                try:
+                    data = self.parse_xrd_file(file_info["filename"])
+                    data = self.filter_data(data, ignore_below_3)
+                    twotheta = data["Angle"]
+                    intensity = data["Intensity"]
+
+                    # Apply baseline correction if selected
+                    if apply_baseline_correction:
+                        intensity = self.als_baseline_correction(intensity)
+
+                    ax.plot(twotheta, [i] * len(twotheta), intensity, label=file_info["custom_name"], color=file_info["color"])
+                except Exception as e:
+                    print(f"Error reading file {file_info['filename']}: {e}")
+
+            ax.set_xlabel("2θ (degrees)")
+            ax.set_ylabel("File Index")
+            ax.set_zlabel("Intensity (a.u.)")
+            ax.legend()
+        else:
+            if plot_option == "Separate":
+                self.plot_in_separate_window(remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction, offset)
+            else:
+                self.plot_in_overlap_window(remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction)
 
     def filter_data(self, data, ignore_below_3):
         if ignore_below_3:

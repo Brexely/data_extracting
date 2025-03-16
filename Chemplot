@@ -1,0 +1,41 @@
+import os
+from rdkit import Chem
+from rdkit.Chem import Draw
+from PIL import Image, ImageDraw, ImageFont
+from IPython.display import display  
+
+def generate_molecule_image(mol_str, mol_format, name):
+    if mol_format == "SMILES":
+        mol = Chem.MolFromSmiles(mol_str)
+    elif mol_format == "InChI":
+        mol = Chem.MolFromInchi(mol_str)
+    else:
+        print("Invalid format. Use 'SMILES' or 'InChI'.")
+        return
+    
+    if mol is None:
+        print("Invalid molecular string.")
+        return
+    
+    img = Draw.MolToImage(mol, size=(400, 400))
+    
+    # Convert to PIL image and add centered text at the top
+    img = img.convert("RGBA")
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.truetype("arial.ttf", 20)
+    
+    # Get text bounding box for centering
+    bbox = draw.textbbox((0, 0), name, font=font)
+    text_width, text_height = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    img_width, img_height = img.size
+    text_position = ((img_width - text_width) // 2, 10)  # Centered at top
+    
+    draw.text(text_position, name, fill="black", font=font)
+    
+    display(img)  # Show the image in Jupyter
+
+if __name__ == "__main__":
+    mol_str = input("Enter the molecular structure (SMILES or InChI): ")
+    mol_format = input("Enter the format (SMILES/InChI): ").strip().upper()
+    name = input("Enter the compound name: ").strip()
+    generate_molecule_image(mol_str, mol_format, name)
