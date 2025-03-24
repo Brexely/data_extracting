@@ -8,7 +8,7 @@ import numpy as np
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QListWidget,
     QVBoxLayout, QPushButton, QRadioButton,
-    QHBoxLayout, QInputDialog, QCheckBox, QWidget, QLineEdit, QColorDialog, QLabel
+    QHBoxLayout, QInputDialog, QCheckBox, QWidget, QLineEdit, QColorDialog, QLabel, QMessageBox
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap
@@ -25,6 +25,7 @@ class XRDPlotter(QMainWindow):
 
         self.setWindowTitle("XRD Data Plotter")
         self.file_list = []
+        self.reference_data = None  # Store reference data
 
         # Central widget and layout
         central_widget = QWidget()
@@ -59,6 +60,11 @@ class XRDPlotter(QMainWindow):
         self.change_color_button.clicked.connect(self.change_color)
         button_layout.addWidget(self.change_color_button)
 
+        # Load Reference File button
+        self.load_reference_button = QPushButton("Load Reference File")
+        self.load_reference_button.clicked.connect(self.load_reference_file)
+        layout.addWidget(self.load_reference_button)
+
         # Plot options
         self.radio_separate = QRadioButton("Separate")
         self.radio_separate.setChecked(True)
@@ -74,6 +80,11 @@ class XRDPlotter(QMainWindow):
         self.offset_input = QLineEdit(self)
         self.offset_input.setPlaceholderText("Enter offset for separate plots (e.g., 1000)")
         layout.addWidget(self.offset_input)
+
+        # Cutoff input for ignoring data below a certain angle
+        self.cutoff_input = QLineEdit(self)
+        self.cutoff_input.setPlaceholderText("Enter cutoff angle (e.g., 3)")
+        layout.addWidget(self.cutoff_input)
 
         # Plot button
         self.plot_button = QPushButton("Plot Data")
@@ -93,10 +104,6 @@ class XRDPlotter(QMainWindow):
         # Remove Y-Axis Labels option
         self.remove_y_axis_labels_checkbox = QCheckBox("Remove Y-Axis Labels")
         layout.addWidget(self.remove_y_axis_labels_checkbox)
-
-        # Ignore data below 3 degrees option
-        self.ignore_below_3_checkbox = QCheckBox("Ignore Data Below 3 Degrees")
-        layout.addWidget(self.ignore_below_3_checkbox)
 
         # X-Axis Tick input
         self.x_axis_ticks_input = QLineEdit(self)
@@ -160,6 +167,16 @@ class XRDPlotter(QMainWindow):
         color_index = len(self.file_list) % len(UNIWEN_COLORS)
         return UNIWEN_COLORS[color_index]
 
+    def load_reference_file(self):
+        filename, _ = QFileDialog.getOpenFileName(self, "Select Reference File", "",
+                                                  "All Files (*);;TXT Files (*.txt);;CSV Files (*.csv);;TSV Files (*.tsv)")
+        if filename:
+            try:
+                self.reference_data = self.parse_xrd_file(filename)
+                print(f"Reference file {filename} loaded successfully.")
+            except Exception as e:
+                print(f"Error loading reference file: {e}")
+
     def parse_xrd_file(self, filename):
         if filename.endswith(".tsv"):
             data = pd.read_csv(filename, sep='\t', header=None, names=["Angle", "Intensity"])
@@ -185,7 +202,7 @@ class XRDPlotter(QMainWindow):
                 if re.match(r'^\s*$', line):  # Skip empty lines
                     continue
                 parts = line.split(',')
-                if len(parts) >= 3:
+                if len(parts) >= 4:
                     try:
                         angle = float(parts[0])
                         intensity = float(parts[2])
@@ -232,97 +249,16 @@ class XRDPlotter(QMainWindow):
                     break
         self.file_list = new_file_list
 
-    def preview_plot(self):
-        if not self.file_list:
-            return
+    def filter_data(self, data):
+        """Filter data based on the cutoff angle specified in the GUI."""
+        try:
+            cutoff = float(self.cutoff_input.text())
+        except ValueError:
+            cutoff = 0  # Default to no cutoff if input is invalid
 
-        plot_option = "Separate" if self.radio_separate.isChecked() else "Overlap"
-        is_3d = self.radio_3d.isChecked()
-        remove_y_axis_labels = self.remove_y_axis_labels_checkbox.isChecked()
-        ignore_below_3 = self.ignore_below_3_checkbox.isChecked()
-        apply_baseline_correction = self.baseline_correction_checkbox.isChecked()
-
-        # Get x-axis ticks step size from input
-        x_ticks_input = self.x_axis_ticks_input.text()
-        if x_ticks_input:
-            try:
-                step_size = float(x_ticks_input)
-                x_max = max(self.parse_xrd_file(file_info["filename"])["Angle"].max() for file_info in self.file_list)
-                x_ticks = np.arange(0, x_max + step_size, step_size)
-            except ValueError:
-                print("Invalid x-axis step size.")
-                x_ticks = None
-        else:
-            x_ticks = None
-
-        # Get offset for separate plots
-        offset = 0
-        offset_input = self.offset_input.text()
-        if offset_input:
-            try:
-                offset = float(offset_input)
-            except ValueError:
-                print("Invalid offset value.")
-                offset = 0
-
-        if is_3d:
-            fig = plt.figure(figsize=(6, 4))
-            ax = fig.add_subplot(111, projection='3d')
-            for i, file_info in enumerate(self.file_list):
-                try:
-                    data = self.parse_xrd_file(file_info["filename"])
-                    data = self.filter_data(data, ignore_below_3)
-                    twotheta = data["Angle"]
-                    intensity = data["Intensity"]
-
-                    # Apply baseline correction if selected
-                    if apply_baseline_correction:
-                        intensity = self.als_baseline_correction(intensity)
-
-                    ax.plot(twotheta, [i] * len(twotheta), intensity, label=file_info["custom_name"], color=file_info["color"])
-                except Exception as e:
-                    print(f"Error reading file {file_info['filename']}: {e}")
-
-            ax.set_xlabel("2θ (degrees)")
-            ax.set_ylabel("File Index")
-            ax.set_zlabel("Intensity (a.u.)")
-            ax.legend()
-        else:
-            fig, ax = plt.subplots(figsize=(6, 4))
-            offset_factor = offset  # Use the user-defined offset
-            for file_info in self.file_list:
-                try:
-                    data = self.parse_xrd_file(file_info["filename"])
-                    data = self.filter_data(data, ignore_below_3)
-                    twotheta = data["Angle"]
-                    intensity = data["Intensity"]
-
-                    # Apply baseline correction if selected
-                    if apply_baseline_correction:
-                        intensity = self.als_baseline_correction(intensity)
-
-                    if plot_option == "Separate":
-                        intensity = intensity + offset_factor
-                        offset_factor += offset  # Increment by the user-defined offset
-
-                    ax.plot(twotheta, intensity, label=file_info["custom_name"], color=file_info["color"])
-                except Exception as e:
-                    print(f"Error reading file {file_info['filename']}: {e}")
-
-            ax.set_xlabel("2θ (degrees)")
-            ax.set_ylabel("Intensity (a.u.)")
-            ax.legend()
-            ax.grid(True)
-
-            if x_ticks is not None:
-                ax.set_xticks(x_ticks)  # Use custom x-axis ticks if provided
-            if remove_y_axis_labels:
-                ax.set_yticks([])  # Remove y-axis ticks
-
-        plt.tight_layout()
-        fig.savefig("preview.png")
-        self.preview_label.setPixmap(QPixmap("preview.png"))
-        plt.close(fig)
+        if cutoff > 0:
+            data = data[data["Angle"] >= cutoff]
+        return data
 
     def plot_data(self):
         if not self.file_list:
@@ -331,7 +267,6 @@ class XRDPlotter(QMainWindow):
         plot_option = "Separate" if self.radio_separate.isChecked() else "Overlap"
         is_3d = self.radio_3d.isChecked()
         remove_y_axis_labels = self.remove_y_axis_labels_checkbox.isChecked()
-        ignore_below_3 = self.ignore_below_3_checkbox.isChecked()
         apply_baseline_correction = self.baseline_correction_checkbox.isChecked()
 
         # Get x-axis ticks step size from input
@@ -363,7 +298,7 @@ class XRDPlotter(QMainWindow):
             for i, file_info in enumerate(self.file_list):
                 try:
                     data = self.parse_xrd_file(file_info["filename"])
-                    data = self.filter_data(data, ignore_below_3)
+                    data = self.filter_data(data)  # Use the updated filter_data method
                     twotheta = data["Angle"]
                     intensity = data["Intensity"]
 
@@ -380,79 +315,58 @@ class XRDPlotter(QMainWindow):
             ax.set_zlabel("Intensity (a.u.)")
             ax.legend()
         else:
-            if plot_option == "Separate":
-                self.plot_in_separate_window(remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction, offset)
-            else:
-                self.plot_in_overlap_window(remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction)
+            fig, ax = plt.subplots(figsize=(10, 6))
+            offset_factor = offset  # Use the user-defined offset
+            for file_info in self.file_list:
+                try:
+                    data = self.parse_xrd_file(file_info["filename"])
+                    data = self.filter_data(data)  # Use the updated filter_data method
+                    twotheta = data["Angle"]
+                    intensity = data["Intensity"]
 
-    def filter_data(self, data, ignore_below_3):
-        if ignore_below_3:
-            data = data[data["Angle"] >= 3]
-        return data
+                    # Apply baseline correction if selected
+                    if apply_baseline_correction:
+                        intensity = self.als_baseline_correction(intensity)
 
-    def plot_in_separate_window(self, remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction, offset):
-        plt.figure(figsize=(10, 6))
-        offset_factor = offset  # Use the user-defined offset
-        for file_info in self.file_list:
-            try:
-                data = self.parse_xrd_file(file_info["filename"])
-                data = self.filter_data(data, ignore_below_3)
-                twotheta = data["Angle"]
-                intensity = data["Intensity"]
+                    if plot_option == "Separate":
+                        intensity = intensity + offset_factor
+                        offset_factor += offset  # Increment by the user-defined offset
 
-                # Apply baseline correction if selected
-                if apply_baseline_correction:
-                    intensity = self.als_baseline_correction(intensity)
+                    ax.plot(twotheta, intensity, label=file_info["custom_name"], color=file_info["color"])
+                except Exception as e:
+                    print(f"Error reading file {file_info['filename']}: {e}")
 
-                intensity = intensity + offset_factor
-                label = file_info["custom_name"]
-                sns.lineplot(x=twotheta, y=intensity, label=str(label), color=file_info["color"])
+            # Plot reference data on a secondary y-axis if loaded
+            if self.reference_data is not None:
+                ref_data = self.filter_data(self.reference_data)
+                ax2 = ax.twinx()  # Create a secondary y-axis
+                ax2.plot(ref_data["Angle"], ref_data["Intensity"], label="Reference", color="black", linestyle="-")
+                ax2.set_ylabel("Reference Intensity (a.u.)")
 
-                offset_factor += offset  # Increment by the user-defined offset
-            except Exception as e:
-                print(f"Error reading file {file_info['filename']}: {e}")
+            ax.set_xlabel("2θ (degrees)")
+            ax.set_ylabel("Intensity (a.u.)")
+            ax.legend(loc="upper left")
+            if self.reference_data is not None:
+                ax2.legend(loc="upper right")
+            ax.grid(True)
 
-        plt.xlabel("2θ (degrees)")
-        plt.ylabel("Intensity (a.u.)")
-        plt.title("XRD Data")
-        plt.legend()
-        plt.grid(True)
+            if x_ticks is not None:
+                ax.set_xticks(x_ticks)  # Use custom x-axis ticks if provided
+            if remove_y_axis_labels:
+                ax.set_yticks([])  # Remove y-axis ticks
 
-        if x_ticks is not None:
-            plt.xticks(x_ticks)  # Use custom x-axis ticks if provided
-        if remove_y_axis_labels:
-            plt.yticks([])  # Remove y-axis ticks
+        plt.tight_layout()
         plt.show()
 
-    def plot_in_overlap_window(self, remove_y_axis_labels, ignore_below_3, x_ticks, apply_baseline_correction):
-        plt.figure(figsize=(10, 6))
-        for file_info in self.file_list:
-            try:
-                data = self.parse_xrd_file(file_info["filename"])
-                data = self.filter_data(data, ignore_below_3)
-                twotheta = data["Angle"]
-                intensity = data["Intensity"]
+    def preview_plot(self):
+        """Preview the plot without fully rendering it."""
+        if not self.file_list:
+            QMessageBox.warning(self, "Warning", "No files to preview.")
+            return
 
-                # Apply baseline correction if selected
-                if apply_baseline_correction:
-                    intensity = self.als_baseline_correction(intensity)
-
-                label = file_info["custom_name"]
-                sns.lineplot(x=twotheta, y=intensity, label=str(label), color=file_info["color"])
-            except Exception as e:
-                print(f"Error reading file {file_info['filename']}: {e}")
-
-        plt.xlabel("2θ (degrees)")
-        plt.ylabel("Intensity (a.u.)")
-        plt.title("XRD Data")
-        plt.legend()
-        plt.grid(True)
-
-        if x_ticks is not None:
-            plt.xticks(x_ticks)  # Use custom x-axis ticks if provided
-        if remove_y_axis_labels:
-            plt.yticks([])  # Remove y-axis ticks
-        plt.show()
+        # Here you can implement a simple preview logic
+        # For now, we will just show a message box
+        QMessageBox.information(self, "Preview", "Preview functionality is not yet implemented.")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
