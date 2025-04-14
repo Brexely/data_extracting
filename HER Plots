@@ -1,0 +1,52 @@
+import tkinter as tk
+from tkinter import messagebox, scrolledtext
+import pandas as pd
+import matplotlib.pyplot as plt
+from io import StringIO
+
+def parse_and_plot():
+    raw_text = text_box.get("1.0", tk.END).strip()
+    if not raw_text:
+        messagebox.showerror("Error", "No data pasted.")
+        return
+
+    try:
+        # Replace tabs (Excel uses tabs for copy-paste) and normalize decimal commas
+        raw_text = raw_text.replace(",", ".")
+        df = pd.read_csv(StringIO(raw_text), sep="\t")
+
+        df.iloc[:, 0] = pd.to_numeric(df.iloc[:, 0], errors='coerce')
+
+        for col in df.columns[1:]:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        plt.figure(figsize=(10, 6))
+        for col in df.columns[1:]:
+            plt.plot(df.iloc[:, 0], df[col], marker='o', label=col)
+
+        plt.xlabel(df.columns[0])
+        plt.ylabel("Value")
+        plt.title("Excel Table Plot")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+    except Exception as e:
+        messagebox.showerror("Parsing Error", f"Something went wrong:\n{e}")
+
+# GUI setup
+root = tk.Tk()
+root.title("Excel Table Plotter")
+root.geometry("600x400")
+
+label = tk.Label(root, text="Paste your table from Excel below (Ctrl+V):", font=('Arial', 12))
+label.pack(pady=10)
+
+text_box = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=70, height=15, font=('Consolas', 10))
+text_box.pack(padx=10)
+
+plot_btn = tk.Button(root, text="Plot Table", command=parse_and_plot, font=('Arial', 12))
+plot_btn.pack(pady=10)
+
+root.mainloop()
