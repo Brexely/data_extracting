@@ -15,6 +15,7 @@ from PyQt5.QtGui import QPixmap
 import os
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
+from scipy.signal import savgol_filter  # Import the Savitzky-Golay filter
 
 # Define a UniWien color palette
 UNIWEN_COLORS = ["#002147", "#d71920", "#ffcc00", "#4e7ab1", "#8fb339", "#6d6e70", "#005f83", "#ff9d00"]
@@ -85,6 +86,20 @@ class XRDPlotter(QMainWindow):
         self.cutoff_input = QLineEdit(self)
         self.cutoff_input.setPlaceholderText("Enter cutoff angle (e.g., 3)")
         layout.addWidget(self.cutoff_input)
+
+        # Savitzky-Golay filter options
+        self.savgol_checkbox = QCheckBox("Apply Savitzky-Golay Filter")
+        layout.addWidget(self.savgol_checkbox)
+        
+        savgol_layout = QHBoxLayout()
+        self.window_length_input = QLineEdit(self)
+        self.window_length_input.setPlaceholderText("Window length (odd integer)")
+        savgol_layout.addWidget(self.window_length_input)
+        
+        self.polyorder_input = QLineEdit(self)
+        self.polyorder_input.setPlaceholderText("Polynomial order")
+        savgol_layout.addWidget(self.polyorder_input)
+        layout.addLayout(savgol_layout)
 
         # Plot button
         self.plot_button = QPushButton("Plot Data")
@@ -181,11 +196,14 @@ class XRDPlotter(QMainWindow):
         if filename.endswith(".tsv"):
             data = pd.read_csv(filename, sep='\t', header=None, names=["Angle", "Intensity"])
         elif filename.endswith(".xy"):
-            # Read .xy files with space-separated values
             data = pd.read_csv(filename, sep='\s+', header=None, names=["Angle", "Intensity"])
         else:
             with open(filename, 'r') as file:
                 lines = file.readlines()
+
+            # Print first few lines for debugging
+            print(f"Preview of the file {filename}:")
+            print("".join(lines[:10]))  # Print first 10 lines
 
             data_start = None
             for i, line in enumerate(lines):
@@ -194,7 +212,7 @@ class XRDPlotter(QMainWindow):
                     break
 
             if data_start is None:
-                raise ValueError(f"No scan points found in {filename}.")
+                raise ValueError(f"No scan points found in {filename}. Please check the file format.")
 
             data = []
             for line in lines[data_start:]:
@@ -236,6 +254,33 @@ class XRDPlotter(QMainWindow):
             w = p * (intensity > baseline) + (1 - p) * (intensity <= baseline)
 
         return intensity - baseline
+
+    def apply_savgol_filter(self, intensity):
+        """Apply Savitzky-Golay filter to the intensity data."""
+        if not self.savgol_checkbox.isChecked():
+            return intensity
+            
+        try:
+            window_length = int(self.window_length_input.text())
+            polyorder = int(self.polyorder_input.text())
+            
+            # Ensure window_length is odd and greater than polyorder
+            if window_length % 2 == 0:
+                window_length += 1
+                self.window_length_input.setText(str(window_length))
+                
+            if window_length <= polyorder:
+                QMessageBox.warning(self, "Warning", "Window length must be greater than polynomial order.")
+                return intensity
+                
+            if window_length > len(intensity):
+                QMessageBox.warning(self, "Warning", f"Window length ({window_length}) is larger than data length ({len(intensity)}).")
+                return intensity
+                
+            return savgol_filter(intensity, window_length=window_length, polyorder=polyorder)
+        except ValueError:
+            QMessageBox.warning(self, "Warning", "Invalid Savitzky-Golay filter parameters.")
+            return intensity
 
     def reorder_files(self):
         """Update the file_list to match the new order of items in the QListWidget."""
@@ -305,6 +350,9 @@ class XRDPlotter(QMainWindow):
                     # Apply baseline correction if selected
                     if apply_baseline_correction:
                         intensity = self.als_baseline_correction(intensity)
+                        
+                    # Apply Savitzky-Golay filter if selected
+                    intensity = self.apply_savgol_filter(intensity)
 
                     ax.plot(twotheta, [i] * len(twotheta), intensity, label=file_info["custom_name"], color=file_info["color"])
                 except Exception as e:
@@ -327,6 +375,9 @@ class XRDPlotter(QMainWindow):
                     # Apply baseline correction if selected
                     if apply_baseline_correction:
                         intensity = self.als_baseline_correction(intensity)
+                        
+                    # Apply Savitzky-Golay filter if selected
+                    intensity = self.apply_savgol_filter(intensity)
 
                     if plot_option == "Separate":
                         intensity = intensity + offset_factor
@@ -345,7 +396,7 @@ class XRDPlotter(QMainWindow):
 
             ax.set_xlabel("2θ (degrees)")
             ax.set_ylabel("Intensity (a.u.)")
-            ax.legend(loc="upper left")
+            ax.legend(loc="upper right")
             if self.reference_data is not None:
                 ax2.legend(loc="upper right")
             ax.grid(True)
@@ -359,14 +410,54 @@ class XRDPlotter(QMainWindow):
         plt.show()
 
     def preview_plot(self):
-        """Preview the plot without fully rendering it."""
         if not self.file_list:
-            QMessageBox.warning(self, "Warning", "No files to preview.")
             return
 
-        # Here you can implement a simple preview logic
-        # For now, we will just show a message box
-        QMessageBox.information(self, "Preview", "Preview functionality is not yet implemented.")
+        plot_option = "Separate" if self.radio_separate.isChecked() else "Overlap"
+        is_3d = self.radio_3d.isChecked()   
+        apply_baseline_correction = self.baseline_correction_checkbox.isChecked()
+
+        # Create a smaller preview plot to avoid heavy computation
+        fig, ax = plt.subplots(figsize=(6, 4))  # Smaller size for preview plot
+
+        offset = 0
+        offset_input = self.offset_input.text()
+        if offset_input:
+            try:
+                offset = float(offset_input)
+            except ValueError:
+                print("Invalid offset value.")
+                offset = 0
+
+        for file_info in self.file_list:
+            try:
+                data = self.parse_xrd_file(file_info["filename"])
+                data = self.filter_data(data)  # Filter data based on cutoff angle
+                twotheta = data["Angle"]
+                intensity = data["Intensity"]
+
+                # Apply baseline correction if selected
+                if apply_baseline_correction:
+                    intensity = self.als_baseline_correction(intensity)
+
+                # Apply Savitzky-Golay filter if selected
+                intensity = self.apply_savgol_filter(intensity)
+
+                if plot_option == "Separate":
+                    intensity = intensity + offset
+                    offset += 1000  # Increment offset for separation
+
+                ax.plot(twotheta, intensity, label=file_info["custom_name"], color=file_info["color"])
+            except Exception as e:
+                print(f"Error reading file {file_info['filename']}: {e}")
+
+        ax.set_xlabel("2θ (degrees)")
+        ax.set_ylabel("Intensity (a.u.)")
+        ax.legend(loc="upper left")
+        ax.grid(True)
+
+        plt.tight_layout()
+        plt.show()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
