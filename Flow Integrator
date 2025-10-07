@@ -1,0 +1,288 @@
+import tkinter as tk
+from tkinter import filedialog, simpledialog, messagebox
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+import itertools
+from scipy.signal import find_peaks
+
+class PeakBoundaryEditor:
+    def __init__(self, df, ax, color, label):
+        self.df = df
+        self.ax = ax
+        self.color = color
+        self.label = label
+        self.peaks = []
+        self.boundaries = []
+        self.peak_info = []
+        self.current_peak = 0
+        self.fig = ax.figure
+        self.cid_click = None
+        self.cid_key = None
+        
+        # Store data for easier access
+        self.x = self.df["Time_h"].values
+        self.y = self.df["Ch3_umol_per_h"].values
+        
+    def find_nearest_peak(self, x_click):
+        """Find the nearest peak to the click position"""
+        if not self.peaks.size:
+            return -1
+            
+        peak_times = self.x[self.peaks]
+        distances = np.abs(peak_times - x_click)
+        nearest_idx = np.argmin(distances)
+        return nearest_idx
+    
+    def on_click(self, event):
+        if event.inaxes != self.ax:
+            return
+        nearest_peak_idx = self.find_nearest_peak(event.xdata)
+        if nearest_peak_idx != -1:
+            self.current_peak = nearest_peak_idx
+            self.plot_current_peak()
+            print(f"Selected peak {self.current_peak + 1}/{len(self.peaks)}")
+    
+    def find_initial_peaks(self):
+        height_threshold = np.percentile(self.y, 60)
+        min_distance = max(2, len(self.y) // 50)
+        self.peaks, properties = find_peaks(
+            self.y, 
+            height=height_threshold,
+            distance=min_distance,
+            prominence=np.std(self.y) * 0.15,
+            width=1
+        )
+        
+        self.boundaries = []
+        for peak_idx in self.peaks:
+            search_window = min(20, len(self.y) // 10)
+            left_start = max(0, peak_idx - search_window)
+            left_section = self.y[left_start:peak_idx]
+            if len(left_section) > 0:
+                left_min_idx = left_start + np.argmin(left_section)
+            else:
+                left_min_idx = max(0, peak_idx - 1)
+            
+            right_end = min(len(self.y), peak_idx + search_window + 1)
+            right_section = self.y[peak_idx:right_end]
+            if len(right_section) > 0:
+                right_min_idx = peak_idx + np.argmin(right_section)
+            else:
+                right_min_idx = min(len(self.y)-1, peak_idx + 1)
+            
+            self.boundaries.append((left_min_idx, peak_idx, right_min_idx))
+        
+        return len(self.peaks)
+    
+    def calculate_baseline(self, x_segment, y_segment):
+        if len(y_segment) >= 2:
+            baseline = (y_segment[0] + y_segment[-1]) / 2
+        else:
+            baseline = y_segment[0] if len(y_segment) > 0 else 0
+        return baseline
+    
+    def integrate_peak(self, left_idx, peak_idx, right_idx):
+        peak_x = self.x[left_idx:right_idx+1]
+        peak_y = self.y[left_idx:right_idx+1]
+        baseline = self.calculate_baseline(peak_x, peak_y)
+        corrected_peak_y = np.maximum(peak_y - baseline, 0)
+        peak_auc = np.trapz(corrected_peak_y, peak_x)
+        return peak_auc, baseline, peak_x, peak_y
+    
+    def plot_current_peak(self):
+        self.ax.clear()
+        self.ax.plot(self.x, self.y, marker='o', markersize=2, linestyle='-',
+                    color=self.color, alpha=0.8, linewidth=1.5, label=self.label)
+        
+        for i, info in enumerate(self.peak_info):
+            left_idx, peak_idx, right_idx = info['boundaries']
+            peak_auc = info['integration']
+            baseline = info['baseline']
+            peak_x = self.x[left_idx:right_idx+1]
+            peak_y = self.y[left_idx:right_idx+1]
+            self.ax.fill_between(peak_x, peak_y, baseline, alpha=0.4, color='green')
+            self.ax.scatter(self.x[peak_idx], self.y[peak_idx], color='darkgreen', s=60, zorder=5)
+            self.ax.annotate(f'#{i+1}: {peak_auc:.2f} µmol',
+                           xy=(self.x[peak_idx], self.y[peak_idx]),
+                           xytext=(10, 15), textcoords='offset points', fontsize=8,
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgreen', alpha=0.9))
+        
+        if self.current_peak < len(self.boundaries):
+            left_idx, peak_idx, right_idx = self.boundaries[self.current_peak]
+            peak_auc, baseline, peak_x, peak_y = self.integrate_peak(left_idx, peak_idx, right_idx)
+            self.ax.fill_between(peak_x, peak_y, baseline, alpha=0.4, color='red')
+            self.ax.axvline(self.x[left_idx], color='blue', linestyle='--', alpha=0.7, linewidth=2)
+            self.ax.axvline(self.x[right_idx], color='purple', linestyle='--', alpha=0.7, linewidth=2)
+            self.ax.scatter(self.x[peak_idx], self.y[peak_idx], color='darkred', s=80, zorder=6)
+            self.ax.annotate(f'Peak {self.current_peak + 1}/{len(self.peaks)}\n'
+                           f'Current: {peak_auc:.2f} µmol\n'
+                           f'Left: {self.x[left_idx]:.2f}h, Right: {self.x[right_idx]:.2f}h',
+                           xy=(self.x[peak_idx], self.y[peak_idx]),
+                           xytext=(10, 40), textcoords='offset points', fontsize=9, 
+                           weight='bold', ha='left',
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.9))
+        
+        self.ax.text(0.02, 0.98, 
+                    "Controls:\nClick: Select peak\n←/→: Left boundary\n↑/↓: Right boundary\nENTER: Accept\nN/P: Next/Prev\nESC: Finish",
+                    transform=self.ax.transAxes, fontsize=9, verticalalignment='top',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        self.ax.set_xlabel("Time (h)")
+        self.ax.set_ylabel("H$_2$ (µmol h$^{-1}$)")
+        self.ax.set_ylim(bottom=0)
+        self.ax.grid(True, alpha=0.3)
+        self.ax.legend(loc='upper right')
+        self.fig.canvas.draw()
+    
+    def on_key_press(self, event):
+        if not self.peaks.size or self.current_peak >= len(self.boundaries):
+            return
+        
+        left_idx, peak_idx, right_idx = self.boundaries[self.current_peak]
+        if event.key == 'left' and left_idx > 0:
+            left_idx -= 1
+        elif event.key == 'right' and left_idx < peak_idx - 1:
+            left_idx += 1
+        elif event.key == 'up' and right_idx < len(self.x) - 1:
+            right_idx += 1
+        elif event.key == 'down' and right_idx > peak_idx + 1:
+            right_idx -= 1
+        elif event.key == 'enter':
+            peak_auc, baseline, _, _ = self.integrate_peak(left_idx, peak_idx, right_idx)
+            self.peak_info.append({
+                'boundaries': (left_idx, peak_idx, right_idx),
+                'integration': peak_auc,
+                'baseline': baseline,
+                'time': self.x[peak_idx],
+                'value': self.y[peak_idx],
+                'peak_number': len(self.peak_info) + 1
+            })
+            print(f"Accepted peak {self.current_peak + 1}: {peak_auc:.2f} µmol")
+        elif event.key == 'n':
+            self.current_peak = min(self.current_peak + 1, len(self.peaks) - 1)
+        elif event.key == 'p':
+            self.current_peak = max(self.current_peak - 1, 0)
+        elif event.key == 'escape':
+            self.finish_editing()
+            return
+        
+        self.boundaries[self.current_peak] = (left_idx, peak_idx, right_idx)
+        self.plot_current_peak()
+    
+    def finish_editing(self):
+        if self.cid_click:
+            self.fig.canvas.mpl_disconnect(self.cid_click)
+        if self.cid_key:
+            self.fig.canvas.mpl_disconnect(self.cid_key)
+        print("Finished boundary editing!")
+        
+    def start_editing(self):
+        num_peaks = self.find_initial_peaks()
+        if num_peaks == 0:
+            print("No peaks found automatically")
+            return self.peak_info
+        print(f"Found {num_peaks} peaks. Starting interactive editing...")
+        self.cid_click = self.fig.canvas.mpl_connect('button_press_event', self.on_click)
+        self.cid_key = self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
+        self.plot_current_peak()
+        return self.peak_info
+
+def process_file(file_path, skip_minutes):
+    df = pd.read_csv(
+        file_path,
+        sep="\t",
+        skiprows=8,
+        header=None,
+        names=[
+            "Date", "Time",
+            "Ch1_ppm", "Ch1_Status",
+            "Ch2_ppm", "Ch2_Status",
+            "Ch3_ppm", "Ch3_Status",
+            "Ch4_ppm", "Ch4_Status"
+        ],
+        engine="python"
+    )
+
+    df = df[pd.to_numeric(df["Ch3_ppm"], errors="coerce").notnull()]
+    df["Ch3_ppm"] = df["Ch3_ppm"].astype(float)
+
+    df["Timestamp"] = pd.to_datetime(df["Date"] + " " + df["Time"])
+    start_time = df["Timestamp"].iloc[0]
+    df["Time_h"] = (df["Timestamp"] - start_time).dt.total_seconds() / 3600
+
+    # Skip user-defined minutes
+    skip_hours = skip_minutes / 60.0
+    df = df[df["Time_h"] >= skip_hours].reset_index(drop=True)
+    print(f"Skipped first {skip_minutes:.2f} minutes ({skip_hours:.3f} hours)")
+
+    df["Ch3_umol_per_h"] = (df["Ch3_ppm"] * 100) / 407.5
+    auc = np.trapz(df["Ch3_umol_per_h"], df["Time_h"])
+    df.attrs["integrated_umol"] = auc
+    return df
+
+def select_and_plot_multiple():
+    file_paths = filedialog.askopenfilenames(title="Select Emerson Log Files")
+    if not file_paths:
+        print("No files selected")
+        return
+
+    # Ask for skip minutes
+    skip_minutes = simpledialog.askfloat(
+        "Skip Minutes",
+        "Enter number of minutes to skip from start:",
+        minvalue=0.0, initialvalue=40.0
+    )
+    if skip_minutes is None:
+        skip_minutes = 0.0
+
+    use_interactive = messagebox.askyesno(
+        "Boundary Editing", 
+        "Do you want to manually adjust peak boundaries?"
+    )
+
+    print(f"Processing {len(file_paths)} files...")
+    print(f"Interactive boundary editing: {use_interactive}")
+    print(f"Skipping first {skip_minutes} minutes of data.")
+
+    all_results = []
+
+    for i, file_path in enumerate(file_paths):
+        print(f"\nProcessing file {i+1}/{len(file_paths)}: {file_path.split('/')[-1]}")
+        try:
+            df = process_file(file_path, skip_minutes)
+            label = file_path.split("/")[-1]
+            total_auc = df.attrs["integrated_umol"]
+            if use_interactive:
+                fig, ax = plt.subplots(figsize=(14, 8))
+                ax.set_title(f"Peak Boundary Editor - {label}", fontsize=14, weight='bold')
+                editor = PeakBoundaryEditor(df, ax, 'blue', label)
+                peak_info = editor.start_editing()
+                file_results = {'file': label, 'total_integration': total_auc, 'peaks': peak_info}
+                all_results.append(file_results)
+                plt.tight_layout()
+                plt.show()
+            else:
+                file_results = {'file': label, 'total_integration': total_auc, 'peaks': []}
+                all_results.append(file_results)
+        except Exception as e:
+            print(f"Error processing {file_path}: {e}")
+            continue
+
+    print("\n" + "="*70)
+    print("FINAL RESULTS")
+    print("="*70)
+    for r in all_results:
+        print(f"\n{r['file']}:")
+        print(f"  Total integration: {r['total_integration']:.2f} µmol")
+        if use_interactive and r['peaks']:
+            total_manual = sum(p['integration'] for p in r['peaks'])
+            for p in r['peaks']:
+                print(f"    Peak {p['peak_number']}: {p['integration']:.2f} µmol at {p['time']:.2f}h")
+            print(f"  Sum of manually integrated peaks: {total_manual:.2f} µmol")
+            print(f"  Remaining area: {r['total_integration'] - total_manual:.2f} µmol")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    root.withdraw()
+    select_and_plot_multiple()
